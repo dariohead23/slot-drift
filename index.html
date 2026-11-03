@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slot Drift</title>
+<style>
+  :root { --bg:#14161a; --panel:#1d2026; --fg:#e8e8e8; --muted:#8a8f98; --p1:#e8413c; --p2:#3c8ee8; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; }
+  #wrap { display:flex; height:100%; }
+  #game { flex:1; position:relative; min-width:0; }
+  canvas { display:block; width:100%; height:100%; }
+  #side { width:280px; background:var(--panel); padding:14px; overflow-y:auto; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:16px 0 8px; }
+  h2:first-child { margin-top:0; }
+  .hint { color:var(--muted); font-size:12px; margin-top:6px; }
+  label { display:block; margin:10px 0 2px; font-size:12px; }
+  label span { float:right; color:var(--muted); font-variant-numeric: tabular-nums; }
+  input[type=range] { width:100%; }
+  #copy { width:100%; margin-top:14px; padding:8px; border:1px solid #444; background:#2b2f37; color:var(--fg); border-radius:6px; cursor:pointer; font:inherit; }
+  #copy:hover { background:#353a44; }
+  kbd { background:#2b2f37; border:1px solid #444; border-radius:4px; padding:0 5px; font-size:12px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="game"><canvas id="c"></canvas></div>
+  <div id="side">
+    <h2>Controles</h2>
+    <div class="hint">
+      Mantené apretado para acelerar; al soltar, frena el motor.<br>
+      Rojo: <kbd>W</kbd> · Azul: <kbd>↑</kbd><br>
+      <kbd>R</kbd> reiniciar
+    </div>
+    <h2>Física</h2>
+    <div id="sliders"></div>
+    <button id="copy">Copiar parámetros</button>
+    <div class="hint">El indicador de deriva de cada coche muestra el ángulo del eje trasero respecto al carril. Si llega a la línea roja, el coche se sale.</div>
+  </div>
+</div>
+<script>
+// ---------- Parámetros ajustables ----------
+const P = {
+  MU:     { v:3000, min:600,  max:5000, step:50,  label:'Agarre neumáticos (px/s²)' },
+  KIN:    { v:0.80, min:0.5,  max:1.0,  step:0.01,label:'Agarre deslizando / estático' },
+  C:      { v:60,   min:10,   max:120,  step:1,   label:'Rigidez lateral neumático' },
+  MAXANG: { v:65,   min:20,   max:110,  step:1,   label:'Ángulo máx. antes de salirse (°)' },
+  GUIDE:  { v:6500, min:2000, max:15000,step:100, label:'Límite de la guía / imán (px/s²)' },
+  POWER:  { v:1600, min:400,  max:2500, step:50,  label:'Potencia motor' },
+  BRAKE:  { v:500,  min:0,    max:2500, step:50,  label:'Freno motor al soltar' },
+};
+const L = 26;          // distancia guía → eje trasero (px)
+const DRAG = 1.4;      // rozamiento proporcional a v
+const DAMP = 4;        // amortiguación del giro del chasis
+const SCRUB = 2.0;     // pérdida de velocidad al ir cruzado
+const LANE = 22;       // separación del carril respecto al centro
+
+// ---------- Pista: rectas y curvas ----------
+const SCALE = 1.5;
+const PIECES = [['S',600],['A',180,140],['S',200],['A',-90,80],['A',90,80],['S',240],['A',90,100],['S',240],['A',90,100]]
+  .map(p => p[0]==='S' ? ['S', p[1]*SCALE] : ['A', p[1], p[2]*SCALE]);
+
+function buildCenter() {
+  const pts = []; let x=0, y=0, th=0;
+  for (const p of PIECES) {
+    const len = p[0]==='S' ? p[1] : Math.abs(p[1]*Math.PI/180)*p[2];
+    const k = p[0]==='S' ? 0 : Math.sign(p[1])/p[2];
+    const n = Math.max(1, Math.round(len));
+    const ds = len/n;
+    for (let i=0;i<n;i++) {
+      pts.push({x,y,th,k,arc:k!==0});
+      x += Math.cos(th+k*ds/2)*ds; y += Math.sin(th+k*ds/2)*ds; th += k*ds;
+    }
+  }
+  return pts;
+}
+const center = buildCenter();
+
+function buildLane(d) {
+  const s=[], x=[], y=[], th=[], k=[];
+  let acc = 0;
+  for (let i=0;i<center.length;i++) {
+    const c = center[i];
+    const px = c.x - Math.sin(c.th)*d, py = c.y + Math.cos(c.th)*d;
+    if (i>0) acc += Math.hypot(px-x[i-1], py-y[i-1]);
+    s.push(acc); x.push(px); y.push(py); th.push(c.th); k.push(c.k/(1-d*c.k));
+  }
+  const last = center.length-1;
+  acc += Math.hypot(x[0]-x[last], y[0]-y[last]);
+  // Suavizamos la curvatura a lo largo de ~un largo de coche: la transición recta→curva
+  // no es instantánea para el chasis (sin esto, cada entrada a curva da un latigazo).
+  const W = 40, n = k.length, ks = new Array(n).fill(0);
+  let sum = 0; for (let i=-W;i<=W;i++) sum += k[(i+n)%n];
+  for (let i=0;i<n;i++) { ks[i] = sum/(2*W+1); sum += k[(i+W+1)%n] - k[(i-W+n)%n]; }
+  return { s, x, y, th, k: ks, len: acc, d };
+}
+const lanes = [buildLane(-LANE), buildLane(LANE)];
+
+function laneAt(lane, s) {
+  s = ((s % lane.len) + lane.len) % lane.len;
+  let lo=0, hi=lane.s.length-1;
+  while (lo<hi) { const m=(lo+hi+1)>>1; if (lane.s[m]<=s) lo=m; else hi=m-1; }
+  const i = lo, j = (i+1) % lane.s.length;
+  const seg = (j===0 ? lane.len : lane.s[j]) - lane.s[i];
+  const t = seg>0 ? (s-lane.s[i])/seg : 0;
+  return { x: lane.x[i]+(lane.x[j]-lane.x[i])*t, y: lane.y[i]+(lane.y[j]-lane.y[i])*t, th: lane.th[i], k: lane.k[i] };
+}
+
+// ---------- Coches ----------
+function makeCar(laneIdx, color, key) {
+  return { laneIdx, color, key, s:0, v:0, b:0, bd:0, thr:0, sliding:false,
+           off:null, lap:0, lapStart:null, last:null, best:null, offs:0 };
+}
+const cars = [ makeCar(0, '#e8413c', 'KeyW'), makeCar(1, '#3c8ee8', 'ArrowUp') ];
+let skids = [];
+let clock = 0;
+
+function resetAll() {
+  for (const c of cars) Object.assign(c, { s:0, v:0, b:0, bd:0, thr:0, sliding:false, off:null, lap:0, lapStart:null, last:null, best:null, offs:0 });
+  skids = [];
+}
+
+// ---------- Input ----------
+const down = new Set();
+addEventListener('keydown', e => {
+  if (['ArrowUp','ArrowDown','Space'].includes(e.code)) e.preventDefault();
+  down.add(e.code);
+  if (e.code==='KeyR') resetAll();
+});
+addEventListener('keyup', e => down.delete(e.code));
+addEventListener('blur', () => down.clear());
+
+function updateThrottle(car, dt) {
+  // Apretado acelera (rampa rápida), soltado vuelve a cero.
+  car.thr += (down.has(car.key) ? 3.5 : -6) * dt;
+  car.thr = Math.min(1, Math.max(0, car.thr));
+}
+
+// ---------- Física ----------
+// Modelo: la guía delantera va clavada en la ranura. El chasis es una barra rígida
+// que pivota en la guía; el eje trasero tiene neumáticos con fuerza lateral
+// lineal hasta saturar (círculo de fricción: lo que usás para acelerar o frenar
+// no lo tenés para agarrar). b = ángulo del eje trasero respecto al carril.
+// Ángulo que toma el chasis en curva sin patinar (el eje trasero va por dentro).
+// La "deriva" es lo que el coche se cruza por encima de eso.
+const geoAngle = k => Math.asin(Math.max(-1, Math.min(1, L*k)));
+
+function stepCar(car, h) {
+  if (car.off) return stepOff(car, h);
+  const lane = lanes[car.laneIdx];
+  const { k } = laneAt(lane, car.s);
+  const v = car.v, b = car.b;
+  const grip = P.MU.v;
+
+  // longitudinal (motor y freno pasan por las ruedas traseras)
+  let motor = P.POWER.v*car.thr - (car.thr < 0.03 && v > 1 ? P.BRAKE.v : 0);
+  motor = Math.max(-grip, Math.min(grip, motor));
+  const latAvail = Math.sqrt(Math.max(0, grip*grip - motor*motor));
+  const vdot = motor - DRAG*v - SCRUB*Math.abs(Math.sin(b))*v;
+
+  // velocidad lateral del eje trasero respecto a donde apuntan las ruedas
+  const slip = v*Math.sin(b) - L*v*k + L*car.bd;
+  let Fy = -P.C.v*slip;
+  const limit = car.sliding ? latAvail*P.KIN.v : latAvail;
+  if (Math.abs(Fy) > limit) { Fy = Math.sign(Fy)*latAvail*P.KIN.v; car.sliding = true; }
+  else car.sliding = false;
+
+  const bdd = (Fy - vdot*Math.sin(b) - v*v*k*Math.cos(b))/L - DAMP*car.bd;
+  car.bd += bdd*h;
+  car.b  += car.bd*h;
+  car.v   = Math.max(0, v + vdot*h);
+  car.s  += car.v*h;
+
+  if (car.s >= lane.len) {
+    car.s -= lane.len; car.lap++;
+    if (car.lapStart !== null) { car.last = clock-car.lapStart; if (!car.best || car.last<car.best) car.best = car.last; }
+    car.lapStart = clock;
+  }
+  if (car.lapStart === null && car.v > 0) car.lapStart = clock;
+
+  // ¿se sale? por ángulo excesivo o porque la guía no aguanta la fuerza
+  car.drift = car.b - geoAngle(k);
+  const tooWide = Math.abs(car.drift) > P.MAXANG.v*Math.PI/180;
+  const guide = Math.abs(car.v*car.v*k) > P.GUIDE.v;
+  if (tooWide || guide) deslot(car, k);
+}
+
+function deslot(car, k) {
+  const q = laneAt(lanes[car.laneIdx], car.s);
+  const yaw = q.th - car.b;
+  car.off = { x:q.x, y:q.y, vx:Math.cos(q.th)*car.v, vy:Math.sin(q.th)*car.v,
+              yaw, w: car.v*k - car.bd, t:0, s:car.s };
+  car.offs++;
+}
+
+function stepOff(car, h) {
+  const o = car.off;
+  o.t += h;
+  const sp = Math.hypot(o.vx, o.vy);
+  if (sp > 0) { const ns = Math.max(0, sp - 1400*h); o.vx *= ns/sp; o.vy *= ns/sp; }
+  o.w *= Math.exp(-2.5*h);
+  o.x += o.vx*h; o.y += o.vy*h; o.yaw += o.w*h;
+  if (sp < 5 && o.t > 1.2) {   // el "comisario" lo vuelve a poner en la pista
+    Object.assign(car, { s:o.s, v:0, b:0, bd:0, thr:0, sliding:false, off:null });
+  }
+}
+
+// ---------- Dibujo ----------
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let view = { sc:1, ox:0, oy:0 };
+function resize() {
+  const r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+  cv.width = r.width*dpr; cv.height = r.height*dpr;
+  const xs = center.map(p=>p.x), ys = center.map(p=>p.y), m = LANE+60;
+  const minx=Math.min(...xs)-m, maxx=Math.max(...xs)+m, miny=Math.min(...ys)-m, maxy=Math.max(...ys)+m;
+  const sc = Math.min(r.width/(maxx-minx), (r.height-70)/(maxy-miny));
+  view = { sc: sc*dpr, ox: (r.width - (maxx-minx)*sc)/2*dpr - minx*sc*dpr, oy: (70 + (r.height-70-(maxy-miny)*sc)/2)*dpr - miny*sc*dpr, dpr };
+}
+addEventListener('resize', resize);
+
+function carPose(car) {
+  if (car.off) return { x:car.off.x, y:car.off.y, yaw:car.off.yaw };
+  const q = laneAt(lanes[car.laneIdx], car.s);
+  return { x:q.x, y:q.y, yaw:q.th - car.b };
+}
+
+function pathOf(xs, ys) {
+  ctx.beginPath(); ctx.moveTo(xs[0], ys[0]);
+  for (let i=1;i<xs.length;i+=2) ctx.lineTo(xs[i], ys[i]);
+  ctx.closePath();
+}
+
+function drawTrack() {
+  const cx = center.map(p=>p.x), cy = center.map(p=>p.y);
+  ctx.lineJoin = 'round';
+  // pianos en curvas
+  ctx.lineWidth = LANE*2 + 52;
+  for (let i=0;i<center.length-1;i++) {
+    if (!center[i].arc) continue;
+    ctx.strokeStyle = (Math.floor(i/14)%2) ? '#d33' : '#eee';
+    ctx.beginPath(); ctx.moveTo(cx[i],cy[i]); ctx.lineTo(cx[i+1],cy[i+1]); ctx.stroke();
+  }
+  // asfalto
+  ctx.strokeStyle = '#3a3d44'; ctx.lineWidth = LANE*2 + 40; pathOf(cx, cy); ctx.stroke();
+  // ranuras
+  for (const ln of lanes) { ctx.strokeStyle = '#111'; ctx.lineWidth = 3; pathOf(ln.x, ln.y); ctx.stroke();
+    ctx.strokeStyle = '#8a8f98'; ctx.lineWidth = 0.8; ctx.setLineDash([2,6]); ctx.beginPath();
+    for (const off of [-3.5, 3.5]) { ctx.moveTo(ln.x[0], ln.y[0]);
+      for (let i=0;i<ln.x.length;i+=3) ctx.lineTo(ln.x[i]-Math.sin(ln.th[i])*off, ln.y[i]+Math.cos(ln.th[i])*off); }
+    ctx.stroke(); ctx.setLineDash([]); }
+  // línea de salida a cuadros
+  const half = LANE+20;
+  for (let r=0;r<2;r++) for (let i=0;i<Math.ceil(half*2/6);i++) {
+    ctx.fillStyle = (i+r)%2 ? '#111' : '#fff';
+    ctx.fillRect(r*6-6, -half + i*6, 6, 6);
+  }
+}
+
+function drawCar(car) {
+  const { x, y, yaw } = carPose(car);
+  ctx.save(); ctx.translate(x, y); ctx.rotate(yaw);
+  // sombra
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(-L-10+2, -10+2, L+20, 20);
+  // ruedas
+  ctx.fillStyle = '#111';
+  ctx.fillRect(-L-5, -12, 11, 5); ctx.fillRect(-L-5, 7, 11, 5);
+  ctx.fillRect(-3, -11, 9, 4); ctx.fillRect(-3, 7, 9, 4);
+  // chasis
+  ctx.fillStyle = car.color;
+  ctx.beginPath(); ctx.moveTo(10, -6); ctx.lineTo(10, 6); ctx.lineTo(-2, 9); ctx.lineTo(-L-9, 9); ctx.lineTo(-L-9, -9); ctx.lineTo(-2, -9); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(-L+2, -5, 12, 10);
+  ctx.fillStyle = '#ffd34d'; ctx.fillRect(6, -2, 6, 4); // guía
+  ctx.restore();
+}
+
+function addSkid(car) {
+  if (!car.sliding || car.off) return;
+  const { x, y, yaw } = carPose(car);
+  const rx = x - Math.cos(yaw)*L, ry = y - Math.sin(yaw)*L;
+  for (const side of [-9.5, 9.5]) skids.push({ x: rx - Math.sin(yaw)*side, y: ry + Math.cos(yaw)*side, t: clock });
+  if (skids.length > 6000) skids.splice(0, skids.length-6000);
+}
+
+function drawSkids() {
+  for (const m of skids) {
+    const a = Math.max(0, 0.35 - (clock-m.t)*0.04);
+    if (a <= 0) continue;
+    ctx.fillStyle = `rgba(10,10,10,${a})`; ctx.fillRect(m.x-1.5, m.y-1.5, 3, 3);
+  }
+}
+
+const fmt = t => t==null ? '–' : t.toFixed(2)+'s';
+function drawHud() {
+  const dpr = view.dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+  const w = cv.width/dpr;
+  cars.forEach((car, i) => {
+    const x0 = i===0 ? 16 : w/2 + 8, bw = w/2 - 24;
+    ctx.fillStyle = car.color; ctx.font = '600 13px system-ui';
+    ctx.fillText(`${i===0?'ROJO':'AZUL'} · vuelta ${car.lap} · última ${fmt(car.last)} · mejor ${fmt(car.best)} · salidas ${car.offs}`, x0, 20);
+    // acelerador
+    ctx.fillStyle = '#2a2d33'; ctx.fillRect(x0, 30, bw*0.45, 10);
+    ctx.fillStyle = car.color; ctx.fillRect(x0, 30, bw*0.45*car.thr, 10);
+    ctx.fillStyle = '#8a8f98'; ctx.font = '11px system-ui';
+    ctx.fillText(`gatillo ${(car.thr*100|0)}%   ${(car.v|0)} px/s`, x0, 56);
+    // deriva
+    const gx = x0 + bw*0.5, gw = bw*0.5, max = P.MAXANG.v;
+    const ang = car.off ? 0 : (car.drift||0)*180/Math.PI;
+    ctx.fillStyle = '#2a2d33'; ctx.fillRect(gx, 30, gw, 10);
+    const mid = gx + gw/2, px = Math.max(-1, Math.min(1, ang/max))*gw/2;
+    ctx.fillStyle = Math.abs(ang) > max*0.75 ? '#ff7a2e' : (car.sliding ? '#ffd34d' : '#6c7380');
+    ctx.fillRect(Math.min(mid, mid+px), 30, Math.abs(px), 10);
+    ctx.fillStyle = '#e33'; ctx.fillRect(gx, 28, 2, 14); ctx.fillRect(gx+gw-2, 28, 2, 14);
+    ctx.fillStyle = '#8a8f98';
+    ctx.fillText(car.off ? 'FUERA DE PISTA' : `deriva ${ang.toFixed(0)}°${car.sliding?'  patinando':''}`, gx, 56);
+  });
+}
+
+// ---------- Bucle ----------
+let lastT = performance.now();
+function frame(now) {
+  const dt = Math.min(1/30, (now-lastT)/1000); lastT = now;
+  const N = 12, h = dt/N;
+  for (const car of cars) updateThrottle(car, dt);
+  for (let i=0;i<N;i++) { clock += h; for (const car of cars) stepCar(car, h); }
+  for (const car of cars) addSkid(car);
+
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle = '#1f3a24'; ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.setTransform(view.sc,0,0,view.sc,view.ox,view.oy);
+  drawTrack(); drawSkids();
+  for (const car of cars) drawCar(car);
+  drawHud();
+  requestAnimationFrame(frame);
+}
+
+// ---------- UI ----------
+const sl = document.getElementById('sliders');
+for (const [key, p] of Object.entries(P)) {
+  const lab = document.createElement('label');
+  lab.innerHTML = `${p.label} <span>${p.v}</span><input type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.v}">`;
+  const inp = lab.querySelector('input'), out = lab.querySelector('span');
+  inp.addEventListener('input', () => { p.v = +inp.value; out.textContent = inp.value; });
+  inp.addEventListener('keydown', e => e.preventDefault()); // que las flechas no muevan el slider
+  sl.appendChild(lab);
+}
+const copyBtn = document.getElementById('copy');
+copyBtn.onclick = async () => {
+  const text = JSON.stringify(Object.fromEntries(Object.entries(P).map(([k, p]) => [k, p.v])), null, 2);
+  let ok = true;
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    // Fallback para cuando el portapapeles no está disponible (p. ej. abierto como file:// en algunos navegadores)
+    const ta = Object.assign(document.createElement('textarea'), { value: text });
+    document.body.appendChild(ta); ta.select();
+    ok = document.execCommand('copy'); ta.remove();
+  }
+  copyBtn.textContent = ok ? '¡Copiado!' : 'No se pudo copiar';
+  copyBtn.blur();
+  setTimeout(() => copyBtn.textContent = 'Copiar parámetros', 1500);
+};
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
