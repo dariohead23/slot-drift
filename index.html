@@ -61,9 +61,11 @@ const SCALE = 1.5;
 const PIECES = [['S',600],['A',180,140],['S',200],['A',-90,80],['A',90,80],['S',240],['A',90,100],['S',240],['A',90,100]]
   .map(p => p[0]==='S' ? ['S', p[1]*SCALE] : ['A', p[1], p[2]*SCALE]);
 
+const pieceStart = [];
 function buildCenter() {
   const pts = []; let x=0, y=0, th=0;
   for (const p of PIECES) {
+    pieceStart.push(pts.length);
     const len = p[0]==='S' ? p[1] : Math.abs(p[1]*Math.PI/180)*p[2];
     const k = p[0]==='S' ? 0 : Math.sign(p[1])/p[2];
     const n = Math.max(1, Math.round(len));
@@ -77,25 +79,51 @@ function buildCenter() {
 }
 const center = buildCenter();
 
-function buildLane(d) {
-  const s=[], x=[], y=[], th=[], k=[];
-  let acc = 0;
-  for (let i=0;i<center.length;i++) {
-    const c = center[i];
-    const px = c.x - Math.sin(c.th)*d, py = c.y + Math.cos(c.th)*d;
-    if (i>0) acc += Math.hypot(px-x[i-1], py-y[i-1]);
-    s.push(acc); x.push(px); y.push(py); th.push(c.th); k.push(c.k/(1-d*c.k));
+// ---------- Recorrido con cruce de carriles ----------
+// Con un solo cruce, cada coche hace media pista en un carril y media en el otro,
+// y cada 2 vueltas los dos recorrieron exactamente lo mismo. Por eso modelamos
+// UN solo camino cerrado de doble vuelta: largar en el carril A es arrancar en
+// s = 0 y largar en el B es arrancar en la mitad (route.half).
+const CROSS_PIECE = 5;   // la recta después de la S
+const CROSS_LEN = 260;   // largo de la transición de un carril al otro (px)
+
+function buildRoute() {
+  const n = center.length;
+  const pieceLen = pieceStart[CROSS_PIECE+1] - pieceStart[CROSS_PIECE];
+  const x0 = pieceStart[CROSS_PIECE] + Math.round((pieceLen - CROSS_LEN)/2);
+  const offsetAt = (i, loop) => {
+    const from = loop === 0 ? -LANE : LANE;          // vuelta 1: A→B, vuelta 2: B→A
+    if (i < x0) return from;
+    if (i >= x0 + CROSS_LEN) return -from;
+    return from*Math.cos(Math.PI*(i - x0)/CROSS_LEN); // S suave, sin quiebre en los extremos
+  };
+  const x = [], y = [];
+  for (let loop=0; loop<2; loop++) for (let i=0;i<n;i++) {
+    const c = center[i], d = offsetAt(i, loop);
+    x.push(c.x - Math.sin(c.th)*d); y.push(c.y + Math.cos(c.th)*d);
   }
-  const last = center.length-1;
-  acc += Math.hypot(x[0]-x[last], y[0]-y[last]);
+  const m = x.length, s = [], th = [], seg = [];
+  let acc = 0;
+  for (let i=0;i<m;i++) {
+    const j = (i+1) % m, dx = x[j]-x[i], dy = y[j]-y[i];
+    s.push(acc); seg.push(Math.hypot(dx, dy)); th.push(Math.atan2(dy, dx)); acc += seg[i];
+  }
+  // curvatura numérica = cambio de rumbo / distancia
+  const k = new Array(m);
+  for (let i=0;i<m;i++) {
+    const p = (i-1+m) % m;
+    let dth = th[i] - th[p];
+    dth = Math.atan2(Math.sin(dth), Math.cos(dth));
+    k[i] = dth / ((seg[i] + seg[p])/2);
+  }
   // Suavizamos la curvatura a lo largo de ~un largo de coche: la transición recta→curva
   // no es instantánea para el chasis (sin esto, cada entrada a curva da un latigazo).
-  const W = 40, n = k.length, ks = new Array(n).fill(0);
-  let sum = 0; for (let i=-W;i<=W;i++) sum += k[(i+n)%n];
-  for (let i=0;i<n;i++) { ks[i] = sum/(2*W+1); sum += k[(i+W+1)%n] - k[(i-W+n)%n]; }
-  return { s, x, y, th, k: ks, len: acc, d };
+  const W = 40, ks = new Array(m);
+  let sum = 0; for (let i=-W;i<=W;i++) sum += k[(i+m)%m];
+  for (let i=0;i<m;i++) { ks[i] = sum/(2*W+1); sum += k[(i+W+1)%m] - k[(i-W+m)%m]; }
+  return { s, x, y, th, k: ks, len: acc, half: s[n] };
 }
-const lanes = [buildLane(-LANE), buildLane(LANE)];
+const route = buildRoute();
 
 function laneAt(lane, s) {
   s = ((s % lane.len) + lane.len) % lane.len;
@@ -108,16 +136,16 @@ function laneAt(lane, s) {
 }
 
 // ---------- Coches ----------
-function makeCar(laneIdx, color, key) {
-  return { laneIdx, color, key, s:0, v:0, b:0, bd:0, thr:0, sliding:false,
+function makeCar(start, color, key) {
+  return { start, color, key, s:start, v:0, b:0, bd:0, thr:0, sliding:false,
            off:null, lap:0, lapStart:null, last:null, best:null, offs:0 };
 }
-const cars = [ makeCar(0, '#e8413c', 'KeyW'), makeCar(1, '#3c8ee8', 'ArrowUp') ];
+const cars = [ makeCar(0, '#e8413c', 'KeyW'), makeCar(route.half, '#3c8ee8', 'ArrowUp') ];
 let skids = [];
 let clock = 0;
 
 function resetAll() {
-  for (const c of cars) Object.assign(c, { s:0, v:0, b:0, bd:0, thr:0, sliding:false, off:null, lap:0, lapStart:null, last:null, best:null, offs:0 });
+  for (const c of cars) Object.assign(c, { s:c.start, v:0, b:0, bd:0, thr:0, sliding:false, off:null, lap:0, lapStart:null, last:null, best:null, offs:0 });
   skids = [];
 }
 
@@ -148,8 +176,7 @@ const geoAngle = k => Math.asin(Math.max(-1, Math.min(1, L*k)));
 
 function stepCar(car, h) {
   if (car.off) return stepOff(car, h);
-  const lane = lanes[car.laneIdx];
-  const { k } = laneAt(lane, car.s);
+  const { k } = laneAt(route, car.s);
   const v = car.v, b = car.b;
   const grip = P.MU.v;
 
@@ -170,10 +197,16 @@ function stepCar(car, h) {
   car.bd += bdd*h;
   car.b  += car.bd*h;
   car.v   = Math.max(0, v + vdot*h);
-  car.s  += car.v*h;
 
-  if (car.s >= lane.len) {
-    car.s -= lane.len; car.lap++;
+  // vuelta: se cruza la línea en s = 0 (carril A) o en s = half (carril B)
+  const prev = car.s;
+  let next = prev + car.v*h, crossed = false;
+  if (next >= route.len) { next -= route.len; crossed = true; }
+  else if (prev < route.half && next >= route.half) crossed = true;
+  car.s = next;
+
+  if (crossed) {
+    car.lap++;
     if (car.lapStart !== null) { car.last = clock-car.lapStart; if (!car.best || car.last<car.best) car.best = car.last; }
     car.lapStart = clock;
   }
@@ -187,7 +220,7 @@ function stepCar(car, h) {
 }
 
 function deslot(car, k) {
-  const q = laneAt(lanes[car.laneIdx], car.s);
+  const q = laneAt(route, car.s);
   const yaw = q.th - car.b;
   car.off = { x:q.x, y:q.y, vx:Math.cos(q.th)*car.v, vy:Math.sin(q.th)*car.v,
               yaw, w: car.v*k - car.bd, t:0, s:car.s };
@@ -221,7 +254,7 @@ addEventListener('resize', resize);
 
 function carPose(car) {
   if (car.off) return { x:car.off.x, y:car.off.y, yaw:car.off.yaw };
-  const q = laneAt(lanes[car.laneIdx], car.s);
+  const q = laneAt(route, car.s);
   return { x:q.x, y:q.y, yaw:q.th - car.b };
 }
 
@@ -244,7 +277,7 @@ function drawTrack() {
   // asfalto
   ctx.strokeStyle = '#3a3d44'; ctx.lineWidth = LANE*2 + 40; pathOf(cx, cy); ctx.stroke();
   // ranuras
-  for (const ln of lanes) { ctx.strokeStyle = '#111'; ctx.lineWidth = 3; pathOf(ln.x, ln.y); ctx.stroke();
+  for (const ln of [route]) { ctx.strokeStyle = '#111'; ctx.lineWidth = 3; pathOf(ln.x, ln.y); ctx.stroke();
     ctx.strokeStyle = '#8a8f98'; ctx.lineWidth = 0.8; ctx.setLineDash([2,6]); ctx.beginPath();
     for (const off of [-3.5, 3.5]) { ctx.moveTo(ln.x[0], ln.y[0]);
       for (let i=0;i<ln.x.length;i+=3) ctx.lineTo(ln.x[i]-Math.sin(ln.th[i])*off, ln.y[i]+Math.cos(ln.th[i])*off); }
@@ -317,12 +350,16 @@ function drawHud() {
 }
 
 // ---------- Bucle ----------
-let lastT = performance.now();
+// Paso de simulación fijo: la física avanza siempre de a 1/600 s, sin importar
+// los FPS. Así una vuelta da el mismo resultado en cualquier máquina.
+const H = 1/600;
+let lastT = performance.now(), accum = 0;
 function frame(now) {
-  const dt = Math.min(1/30, (now-lastT)/1000); lastT = now;
-  const N = 12, h = dt/N;
-  for (const car of cars) updateThrottle(car, dt);
-  for (let i=0;i<N;i++) { clock += h; for (const car of cars) stepCar(car, h); }
+  accum += Math.min(0.1, (now-lastT)/1000); lastT = now;
+  while (accum >= H) {
+    accum -= H; clock += H;
+    for (const car of cars) { updateThrottle(car, H); stepCar(car, H); }
+  }
   for (const car of cars) addSkid(car);
 
   ctx.setTransform(1,0,0,1,0,0);
