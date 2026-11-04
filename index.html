@@ -11,50 +11,107 @@
   #wrap { display:flex; height:100%; }
   #game { flex:1; position:relative; min-width:0; }
   canvas { display:block; width:100%; height:100%; }
-  #side { width:280px; background:var(--panel); padding:14px; overflow-y:auto; }
-  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:16px 0 8px; }
+  #side { width:290px; background:var(--panel); padding:14px; overflow-y:auto; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:18px 0 8px; }
   h2:first-child { margin-top:0; }
   .hint { color:var(--muted); font-size:12px; margin-top:6px; }
-  label { display:block; margin:10px 0 2px; font-size:12px; }
-  label span { float:right; color:var(--muted); font-variant-numeric: tabular-nums; }
+  button { padding:7px 8px; border:1px solid #444; background:#2b2f37; color:var(--fg); border-radius:6px; cursor:pointer; font:inherit; font-size:13px; }
+  button:hover { background:#353a44; }
+  button:disabled { opacity:.4; cursor:default; }
+  .seg { display:flex; gap:4px; }
+  .seg button { flex:1; padding:7px 4px; }
+  .seg button.on { background:#3a4250; border-color:#7a8597; }
+  .btns { display:flex; gap:4px; flex-wrap:wrap; margin-top:8px; }
+  .btns button { flex:1; }
+  .radio { display:flex; gap:8px; align-items:center; margin:5px 0; font-size:13px; cursor:pointer; }
+  .radio.dis { opacity:.4; cursor:default; }
+  .radio small { color:var(--muted); }
+  #name { width:100%; margin-top:4px; padding:6px; background:#14161a; color:var(--fg); border:1px solid #444; border-radius:6px; font:inherit; }
+  #sliders label { display:block; margin:10px 0 2px; font-size:12px; }
+  #sliders label span { float:right; color:var(--muted); font-variant-numeric: tabular-nums; }
+  #sliders.locked { opacity:.5; }
   input[type=range] { width:100%; }
-  #copy { width:100%; margin-top:14px; padding:8px; border:1px solid #444; background:#2b2f37; color:var(--fg); border-radius:6px; cursor:pointer; font:inherit; }
-  #copy:hover { background:#353a44; }
+  #copy { width:100%; margin-top:14px; }
   kbd { background:#2b2f37; border:1px solid #444; border-radius:4px; padding:0 5px; font-size:12px; }
+  dialog { background:var(--panel); color:var(--fg); border:1px solid #444; border-radius:10px; width:min(520px, 92vw); }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  dialog textarea { width:100%; height:140px; background:#14161a; color:var(--fg); border:1px solid #444; border-radius:6px; font:12px monospace; }
+  #impMsg { min-height:1.4em; font-size:12px; color:#ff8a7a; margin-top:6px; }
+  #toast { position:absolute; left:50%; bottom:18px; transform:translateX(-50%); background:#2b2f37; border:1px solid #555; padding:8px 14px; border-radius:8px; opacity:0; transition:opacity .25s; pointer-events:none; }
+  #toast.show { opacity:1; }
 </style>
 </head>
 <body>
 <div id="wrap">
-  <div id="game"><canvas id="c"></canvas></div>
+  <div id="game"><canvas id="c"></canvas><div id="toast"></div></div>
   <div id="side">
-    <h2>Controles</h2>
-    <div class="hint">
-      Mantené apretado para acelerar; al soltar, frena el motor.<br>
-      Rojo: <kbd>W</kbd> · Azul: <kbd>↑</kbd><br>
-      <kbd>R</kbd> reiniciar
+    <h2>Modo</h2>
+    <div class="seg">
+      <button data-mode="libre">Libre</button>
+      <button data-mode="carrera">Carrera 2J</button>
+      <button data-mode="crono">Contrarreloj</button>
     </div>
+    <div class="hint" id="modeHint"></div>
+
+    <div id="ghostBox">
+      <h2>Fantasma</h2>
+      <div id="ghostList"></div>
+      <div class="btns">
+        <button id="expBest">Exportar mejor</button>
+        <button id="expLast">Exportar última</button>
+        <button id="impBtn">Importar</button>
+      </div>
+      <label class="hint" style="display:block;margin-top:10px">Tu nombre (va dentro de tus fantasmas)
+        <input id="name" maxlength="20" placeholder="Anónimo">
+      </label>
+    </div>
+
+    <h2>Controles</h2>
+    <div class="hint" id="keysHint"></div>
+
     <h2>Física</h2>
+    <div class="hint" id="physNote"></div>
     <div id="sliders"></div>
     <button id="copy">Copiar parámetros</button>
-    <div class="hint">El indicador de deriva de cada coche muestra el ángulo del eje trasero respecto al carril. Si llega a la línea roja, el coche se sale.</div>
+    <div class="hint">El indicador de deriva muestra cuánto se cruza la cola. Si llega a la línea roja, el coche se sale.</div>
   </div>
 </div>
+
+<dialog id="impDlg">
+  <h2 style="margin-top:0">Importar fantasma</h2>
+  <div class="hint" style="margin-bottom:8px">Pegá el texto que te pasaron (empieza con <code>SDG1.</code>).</div>
+  <textarea id="impText" spellcheck="false"></textarea>
+  <div id="impMsg"></div>
+  <div class="btns"><button id="impOk">Cargar</button><button id="impCancel">Cancelar</button></div>
+</dialog>
+
 <script>
-// ---------- Parámetros ajustables ----------
+// ---------- Parámetros ----------
 const P = {
-  MU:     { v:3000, min:600,  max:5000, step:50,  label:'Agarre neumáticos (px/s²)' },
-  KIN:    { v:0.80, min:0.5,  max:1.0,  step:0.01,label:'Agarre deslizando / estático' },
-  C:      { v:60,   min:10,   max:120,  step:1,   label:'Rigidez lateral neumático' },
-  MAXANG: { v:65,   min:20,   max:110,  step:1,   label:'Ángulo máx. antes de salirse (°)' },
-  GUIDE:  { v:6500, min:2000, max:15000,step:100, label:'Límite de la guía / imán (px/s²)' },
-  POWER:  { v:1600, min:400,  max:2500, step:50,  label:'Potencia motor' },
-  BRAKE:  { v:500,  min:0,    max:2500, step:50,  label:'Freno motor al soltar' },
+  MU:     { min:600,  max:5000, step:50,  label:'Agarre neumáticos (px/s²)' },
+  KIN:    { min:0.5,  max:1.0,  step:0.01,label:'Agarre deslizando / estático' },
+  C:      { min:10,   max:120,  step:1,   label:'Rigidez lateral neumático' },
+  MAXANG: { min:20,   max:110,  step:1,   label:'Ángulo máx. antes de salirse (°)' },
+  GUIDE:  { min:2000, max:15000,step:100, label:'Límite de la guía / imán (px/s²)' },
+  POWER:  { min:400,  max:2500, step:50,  label:'Potencia motor' },
+  BRAKE:  { min:0,    max:2500, step:50,  label:'Freno motor al soltar' },
 };
+// Física oficial: fija en Carrera y Contrarreloj. Si cambia, subir PHYS_VERSION
+// (los fantasmas de otra versión dejan de ser compatibles).
+const OFFICIAL = { MU:3000, KIN:0.8, C:60, MAXANG:65, GUIDE:6500, POWER:1600, BRAKE:500 };
+const PHYS_VERSION = 1;
+const TRACK_ID = 'cruce-1';
+const freeVals = { ...OFFICIAL };
+for (const k in P) P[k].v = OFFICIAL[k];
+
 const L = 26;          // distancia guía → eje trasero (px)
 const DRAG = 1.4;      // rozamiento proporcional a v
 const DAMP = 4;        // amortiguación del giro del chasis
 const SCRUB = 2.0;     // pérdida de velocidad al ir cruzado
 const LANE = 22;       // separación del carril respecto al centro
+const LAPS = 4;        // vueltas por carrera (par: con el cruce, 2 vueltas = mismo recorrido)
+const PENALTY = 1;     // segundos por largada en falso
+const GHOST_HZ = 30;   // muestras por segundo del fantasma
 
 // ---------- Pista: rectas y curvas ----------
 const SCALE = 1.5;
@@ -124,6 +181,7 @@ function buildRoute() {
   return { s, x, y, th, k: ks, len: acc, half: s[n] };
 }
 const route = buildRoute();
+const RACE_DIST = route.len * LAPS/2;
 
 function laneAt(lane, s) {
   s = ((s % lane.len) + lane.len) % lane.len;
@@ -135,33 +193,46 @@ function laneAt(lane, s) {
   return { x: lane.x[i]+(lane.x[j]-lane.x[i])*t, y: lane.y[i]+(lane.y[j]-lane.y[i])*t, th: lane.th[i], k: lane.k[i] };
 }
 
-// ---------- Coches ----------
-function makeCar(start, color, key) {
-  return { start, color, key, s:start, v:0, b:0, bd:0, thr:0, sliding:false,
-           off:null, lap:0, lapStart:null, last:null, best:null, offs:0 };
-}
-const cars = [ makeCar(0, '#e8413c', 'KeyW'), makeCar(route.half, '#3c8ee8', 'ArrowUp') ];
-let skids = [];
+// ---------- Estado ----------
+let mode = 'libre';            // 'libre' | 'carrera' | 'crono'
 let clock = 0;
+let skids = [];
+const race = { phase:'idle', t0:0, lightsStart:0, goAt:0, ghost:null, rec:null, recStep:0, recDone:false, result:null };
 
-function resetAll() {
-  for (const c of cars) Object.assign(c, { s:c.start, v:0, b:0, bd:0, thr:0, sliding:false, off:null, lap:0, lapStart:null, last:null, best:null, offs:0 });
-  skids = [];
+function makeCar(name, color) {
+  return { name, color, keys:[], start:0, active:true };
+}
+const cars = [ makeCar('ROJO', '#e8413c'), makeCar('AZUL', '#3c8ee8') ];
+const player = cars[0];
+const activeCars = () => cars.filter(c => c.active);
+
+function resetCar(c) {
+  Object.assign(c, { s:c.start, v:0, b:geoAngle(laneAt(route, c.start).k), bd:0, thr:0, drift:0, sliding:false, off:null,
+    lap:0, lapStart:null, last:null, best:null, offs:0, dist:0,
+    splits:[], finished:false, finishT:null, falseStart:false });
 }
 
 // ---------- Input ----------
 const down = new Set();
+const typing = e => ['INPUT','TEXTAREA'].includes(e.target.tagName) && e.target.type !== 'range';
 addEventListener('keydown', e => {
-  if (['ArrowUp','ArrowDown','Space'].includes(e.code)) e.preventDefault();
+  if (typing(e)) return;
+  if (['ArrowUp','ArrowDown','Space','Enter'].includes(e.code)) e.preventDefault();
   down.add(e.code);
-  if (e.code==='KeyR') resetAll();
+  if (e.code==='KeyR') resetRace();
+  if ((e.code==='Enter' || e.code==='NumpadEnter') && mode!=='libre' && !e.repeat) {
+    if (race.phase==='done') resetRace();
+    if (race.phase==='idle') startLights();
+  }
 });
 addEventListener('keyup', e => down.delete(e.code));
 addEventListener('blur', () => down.clear());
+const pressing = car => car.keys.some(k => down.has(k));
 
 function updateThrottle(car, dt) {
   // Apretado acelera (rampa rápida), soltado vuelve a cero.
-  car.thr += (down.has(car.key) ? 3.5 : -6) * dt;
+  const on = pressing(car) && !car.finished;
+  car.thr += (on ? 3.5 : -6) * dt;
   car.thr = Math.min(1, Math.max(0, car.thr));
 }
 
@@ -199,16 +270,21 @@ function stepCar(car, h) {
   car.v   = Math.max(0, v + vdot*h);
 
   // vuelta: se cruza la línea en s = 0 (carril A) o en s = half (carril B)
-  const prev = car.s;
-  let next = prev + car.v*h, crossed = false;
+  const prev = car.s, ds = car.v*h;
+  let next = prev + ds, crossed = false;
   if (next >= route.len) { next -= route.len; crossed = true; }
   else if (prev < route.half && next >= route.half) crossed = true;
   car.s = next;
+  car.dist += ds;
 
   if (crossed) {
     car.lap++;
     if (car.lapStart !== null) { car.last = clock-car.lapStart; if (!car.best || car.last<car.best) car.best = car.last; }
     car.lapStart = clock;
+    if (mode !== 'libre' && !car.finished) {
+      car.splits.push(clock - race.t0);
+      if (car.lap >= LAPS) finishCar(car);
+    }
   }
   if (car.lapStart === null && car.v > 0) car.lapStart = clock;
 
@@ -235,20 +311,206 @@ function stepOff(car, h) {
   o.w *= Math.exp(-2.5*h);
   o.x += o.vx*h; o.y += o.vy*h; o.yaw += o.w*h;
   if (sp < 5 && o.t > 1.2) {   // el "comisario" lo vuelve a poner en la pista
-    Object.assign(car, { s:o.s, v:0, b:0, bd:0, thr:0, sliding:false, off:null });
+    Object.assign(car, { s:o.s, v:0, b:geoAngle(laneAt(route, o.s).k), bd:0, thr:0, sliding:false, off:null });
   }
+}
+
+// ---------- Carrera ----------
+function resetRace() {
+  race.phase = 'idle'; race.result = null; race.rec = null; race.recDone = false; race.endAt = null;
+  if (mode === 'crono') {
+    race.ghost = loadSelectedGhost();
+    // largás en el carril opuesto al del fantasma
+    player.start = race.ghost && race.ghost.startLane === 0 ? route.half : 0;
+  } else {
+    race.ghost = null;
+    player.start = 0;
+  }
+  cars[1].start = route.half;
+  cars.forEach(resetCar);
+  skids = [];
+}
+
+function startLights() {
+  race.phase = 'lights';
+  race.lightsStart = clock;
+  race.goAt = clock + 5*0.8 + 0.4 + Math.random()*1.4;   // 5 luces, y se apagan tras una espera al azar
+}
+
+function go() {
+  race.phase = 'running';
+  race.t0 = clock;
+  for (const c of activeCars()) c.lapStart = clock;
+  if (mode === 'crono') {
+    race.rec = { dist:[], b:[], off:[], ox:[], oy:[], oyaw:[] };
+    race.recStep = 0;
+    sample(player);
+  }
+}
+
+function finishCar(car) {
+  car.finished = true;
+  car.finishT = car.splits[LAPS-1] + (car.falseStart ? PENALTY : 0);
+  if (activeCars().every(c => c.finished)) race.endAt = clock + (mode==='crono' ? 0.3 : 0);
+}
+
+function sample(car) {
+  const r = race.rec;
+  r.dist.push(car.dist); r.b.push(car.off ? 0 : car.b); r.off.push(car.off ? 1 : 0);
+  r.ox.push(car.off ? car.off.x : 0); r.oy.push(car.off ? car.off.y : 0); r.oyaw.push(car.off ? car.off.yaw : 0);
+}
+
+function endRace() {
+  race.phase = 'done';
+  if (mode === 'crono') {
+    const g = {
+      fmt:1, track:TRACK_ID, phys:PHYS_VERSION, name: playerName(), date: new Date().toISOString(),
+      time: player.finishT, pen: player.falseStart ? PENALTY : 0, splits: player.splits.slice(),
+      startLane: player.start === 0 ? 0 : 1, hz: GHOST_HZ,
+      dist: Float32Array.from(race.rec.dist), b: Float32Array.from(race.rec.b), off: Uint8Array.from(race.rec.off),
+      ox: Float32Array.from(race.rec.ox), oy: Float32Array.from(race.rec.oy), oyaw: Float32Array.from(race.rec.oyaw),
+    };
+    const prevBest = loadGhost('best');
+    const record = !prevBest || g.time < prevBest.time;
+    saveGhost('last', g);
+    if (record) saveGhost('best', g);
+    race.result = { record, prevBest, vs: race.ghost };
+    renderGhostList();
+  } else {
+    race.result = { order: activeCars().slice().sort((a,b) => a.finishT - b.finishT) };
+  }
+}
+
+function simStep() {
+  clock += H;
+  if (race.phase === 'lights' && clock >= race.goAt) go();
+  const moving = mode === 'libre' || race.phase === 'running' || race.phase === 'done';
+  for (const car of activeCars()) {
+    if (!moving) {
+      if (race.phase === 'lights' && pressing(car)) car.falseStart = true;
+      car.thr = 0;
+      continue;
+    }
+    updateThrottle(car, H);
+    stepCar(car, H);
+  }
+  if (race.rec && !race.recDone && race.phase !== 'idle') {
+    if (++race.recStep % (600/GHOST_HZ) === 0) { sample(player); if (player.finished) race.recDone = true; }
+  }
+  if (race.phase === 'running' && race.endAt != null && clock >= race.endAt) { race.endAt = null; endRace(); }
+}
+
+// ---------- Fantasmas ----------
+// Se graba la distancia recorrida y el ángulo de la cola (no las teclas): así se
+// reproduce idéntico en cualquier navegador. Si el coche estaba fuera de pista,
+// se graba su posición libre. El fantasma corre en su carril original.
+function ghostPose(g, t) {
+  const n = g.dist.length;
+  let f = Math.max(0, t*g.hz), i = Math.floor(f);
+  if (i >= n-1) { i = n-1; f = i; }
+  const j = Math.min(i+1, n-1), a = f - i;
+  if (g.off[i]) {
+    const u = g.off[j] ? a : 0;
+    return { x: g.ox[i]+(g.ox[j]-g.ox[i])*u, y: g.oy[i]+(g.oy[j]-g.oy[i])*u, yaw: g.oyaw[i]+(g.oyaw[j]-g.oyaw[i])*u };
+  }
+  const u = g.off[j] ? 0 : a;
+  const dist = g.dist[i] + (g.dist[j]-g.dist[i])*u, b = g.b[i] + (g.b[j]-g.b[i])*u;
+  const q = laneAt(route, (g.startLane === 0 ? 0 : route.half) + dist);
+  return { x:q.x, y:q.y, yaw:q.th - b };
+}
+
+// ¿En qué momento pasó el fantasma por esta distancia?
+function ghostTimeAt(g, D) {
+  const d = g.dist, n = d.length;
+  if (D <= d[0]) return 0;
+  if (D > d[n-1]) return null;
+  let lo = 0, hi = n-1;
+  while (hi - lo > 1) { const m = (lo+hi)>>1; if (d[m] < D) lo = m; else hi = m; }
+  const span = d[hi] - d[lo];
+  return (lo + (span > 0 ? (D - d[lo])/span : 0)) / g.hz;
+}
+
+const lapTimes = splits => splits.map((t,i) => t - (i ? splits[i-1] : 0));
+
+// --- guardado en el navegador ---
+const store = {
+  get(k) { try { return localStorage.getItem('slotdrift.'+k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem('slotdrift.'+k, v); return true; } catch { return false; } },
+};
+const ARR = { dist:Float32Array, b:Float32Array, off:Uint8Array, ox:Float32Array, oy:Float32Array, oyaw:Float32Array };
+function u8ToB64(u8) { let s=''; for (let i=0;i<u8.length;i+=0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i+0x8000)); return btoa(s); }
+function b64ToU8(b) { const s = atob(b), u = new Uint8Array(s.length); for (let i=0;i<s.length;i++) u[i] = s.charCodeAt(i); return u; }
+function ghostToJSON(g) { const o = { ...g }; for (const k in ARR) o[k] = u8ToB64(new Uint8Array(g[k].buffer)); return JSON.stringify(o); }
+function ghostFromJSON(str) {
+  const o = JSON.parse(str);
+  for (const [k, T] of Object.entries(ARR)) o[k] = new T(b64ToU8(o[k]).buffer);
+  return o;
+}
+function validGhost(g) {
+  if (!g || g.fmt !== 1) return 'No es un fantasma válido.';
+  if (g.track !== TRACK_ID) return 'Es de otra pista.';
+  if (g.phys !== PHYS_VERSION) return `Es de otra versión de la física (v${g.phys}; esta es v${PHYS_VERSION}).`;
+  const n = g.dist.length;
+  if (!n || [g.b, g.off, g.ox, g.oy, g.oyaw].some(a => a.length !== n)) return 'El fantasma está incompleto.';
+  for (let i=1;i<n;i++) if (!(g.dist[i] >= g.dist[i-1])) return 'El fantasma tiene datos inconsistentes.';
+  if (g.dist[n-1] < RACE_DIST - 2) return 'El fantasma no completa la carrera.';
+  if (!(g.splits?.length === LAPS) || !(g.time >= g.splits[LAPS-1])) return 'Los tiempos del fantasma no cierran.';
+  return null;
+}
+const ghostKey = slot => `ghost.${slot}.${TRACK_ID}.v${PHYS_VERSION}`;
+function loadGhost(slot) {
+  const s = store.get(ghostKey(slot)); if (!s) return null;
+  try { const g = ghostFromJSON(s); return validGhost(g) ? null : g; } catch { return null; }
+}
+const saveGhost = (slot, g) => store.set(ghostKey(slot), ghostToJSON(g));
+let ghostChoice = store.get('ghostChoice') || 'best';
+const loadSelectedGhost = () => ghostChoice === 'none' ? null : loadGhost(ghostChoice);
+const playerName = () => (document.getElementById('name').value.trim() || 'Anónimo').slice(0, 20);
+
+// --- exportar / importar (texto comprimido para mandar por chat o mail) ---
+async function gzip(str) {
+  if (!('CompressionStream' in window)) return null;
+  return new Uint8Array(await new Response(new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
+}
+async function gunzip(u8) {
+  return await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+}
+async function exportGhost(slot) {
+  const g = loadGhost(slot);
+  if (!g) return toast('No hay fantasma para exportar.');
+  const json = ghostToJSON(g), z = await gzip(json);
+  const text = z ? 'SDG1.' + u8ToB64(z) : 'SDG0.' + btoa(unescape(encodeURIComponent(json)));
+  const ok = await copyText(text);
+  toast(ok ? `Fantasma copiado (${(text.length/1024).toFixed(1)} KB de texto). Pegalo donde quieras.` : 'No se pudo copiar.');
+}
+async function importGhost(text) {
+  text = text.replace(/\s+/g, '');
+  let json;
+  try {
+    if (text.startsWith('SDG1.')) json = await gunzip(b64ToU8(text.slice(5)));
+    else if (text.startsWith('SDG0.')) json = decodeURIComponent(escape(atob(text.slice(5))));
+    else return 'El texto no parece un fantasma (tiene que empezar con SDG1.).';
+  } catch { return 'El texto está cortado o dañado.'; }
+  let g; try { g = ghostFromJSON(json); } catch { return 'El texto está cortado o dañado.'; }
+  const err = validGhost(g); if (err) return err;
+  saveGhost('imported', g);
+  ghostChoice = 'imported'; store.set('ghostChoice', ghostChoice);
+  renderGhostList();
+  if (mode === 'crono' && race.phase !== 'running' && race.phase !== 'lights') resetRace();
+  return null;
 }
 
 // ---------- Dibujo ----------
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-let view = { sc:1, ox:0, oy:0 };
+let view = { sc:1, ox:0, oy:0, dpr:1 };
+const HUD_H = 70;
 function resize() {
   const r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
   cv.width = r.width*dpr; cv.height = r.height*dpr;
   const xs = center.map(p=>p.x), ys = center.map(p=>p.y), m = LANE+60;
   const minx=Math.min(...xs)-m, maxx=Math.max(...xs)+m, miny=Math.min(...ys)-m, maxy=Math.max(...ys)+m;
-  const sc = Math.min(r.width/(maxx-minx), (r.height-70)/(maxy-miny));
-  view = { sc: sc*dpr, ox: (r.width - (maxx-minx)*sc)/2*dpr - minx*sc*dpr, oy: (70 + (r.height-70-(maxy-miny)*sc)/2)*dpr - miny*sc*dpr, dpr };
+  const sc = Math.min(r.width/(maxx-minx), (r.height-HUD_H)/(maxy-miny));
+  view = { sc: sc*dpr, ox: (r.width - (maxx-minx)*sc)/2*dpr - minx*sc*dpr, oy: (HUD_H + (r.height-HUD_H-(maxy-miny)*sc)/2)*dpr - miny*sc*dpr, dpr };
 }
 addEventListener('resize', resize);
 
@@ -277,11 +539,12 @@ function drawTrack() {
   // asfalto
   ctx.strokeStyle = '#3a3d44'; ctx.lineWidth = LANE*2 + 40; pathOf(cx, cy); ctx.stroke();
   // ranuras
-  for (const ln of [route]) { ctx.strokeStyle = '#111'; ctx.lineWidth = 3; pathOf(ln.x, ln.y); ctx.stroke();
-    ctx.strokeStyle = '#8a8f98'; ctx.lineWidth = 0.8; ctx.setLineDash([2,6]); ctx.beginPath();
-    for (const off of [-3.5, 3.5]) { ctx.moveTo(ln.x[0], ln.y[0]);
-      for (let i=0;i<ln.x.length;i+=3) ctx.lineTo(ln.x[i]-Math.sin(ln.th[i])*off, ln.y[i]+Math.cos(ln.th[i])*off); }
-    ctx.stroke(); ctx.setLineDash([]); }
+  const ln = route;
+  ctx.strokeStyle = '#111'; ctx.lineWidth = 3; pathOf(ln.x, ln.y); ctx.stroke();
+  ctx.strokeStyle = '#8a8f98'; ctx.lineWidth = 0.8; ctx.setLineDash([2,6]); ctx.beginPath();
+  for (const off of [-3.5, 3.5]) { ctx.moveTo(ln.x[0], ln.y[0]);
+    for (let i=0;i<ln.x.length;i+=3) ctx.lineTo(ln.x[i]-Math.sin(ln.th[i])*off, ln.y[i]+Math.cos(ln.th[i])*off); }
+  ctx.stroke(); ctx.setLineDash([]);
   // línea de salida a cuadros
   const half = LANE+20;
   for (let r=0;r<2;r++) for (let i=0;i<Math.ceil(half*2/6);i++) {
@@ -290,17 +553,13 @@ function drawTrack() {
   }
 }
 
-function drawCar(car) {
-  const { x, y, yaw } = carPose(car);
-  ctx.save(); ctx.translate(x, y); ctx.rotate(yaw);
-  // sombra
-  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(-L-10+2, -10+2, L+20, 20);
-  // ruedas
+function drawCar({ x, y, yaw }, color, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.rotate(yaw);
+  if (alpha === 1) { ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(-L-10+2, -10+2, L+20, 20); }
   ctx.fillStyle = '#111';
   ctx.fillRect(-L-5, -12, 11, 5); ctx.fillRect(-L-5, 7, 11, 5);
   ctx.fillRect(-3, -11, 9, 4); ctx.fillRect(-3, 7, 9, 4);
-  // chasis
-  ctx.fillStyle = car.color;
+  ctx.fillStyle = color;
   ctx.beginPath(); ctx.moveTo(10, -6); ctx.lineTo(10, 6); ctx.lineTo(-2, 9); ctx.lineTo(-L-9, 9); ctx.lineTo(-L-9, -9); ctx.lineTo(-2, -9); ctx.closePath(); ctx.fill();
   ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(-L+2, -5, 12, 10);
   ctx.fillStyle = '#ffd34d'; ctx.fillRect(6, -2, 6, 4); // guía
@@ -323,30 +582,117 @@ function drawSkids() {
   }
 }
 
-const fmt = t => t==null ? '–' : t.toFixed(2)+'s';
+const fmt = t => t==null ? '–' : t.toFixed(2)+' s';
+const fmtD = d => (d < 0 ? '−' : '+') + Math.abs(d).toFixed(2);
+const raceTime = car => car.finished ? car.finishT : (race.phase === 'running' ? clock - race.t0 : 0);
+
+function carPanel(car, x0, bw) {
+  ctx.fillStyle = car.color; ctx.font = '600 13px system-ui';
+  let line;
+  if (mode === 'libre') line = `${car.name} · vuelta ${car.lap} · última ${fmt(car.last)} · mejor ${fmt(car.best)} · salidas ${car.offs}`;
+  else line = `${car.name} · vuelta ${Math.min(car.lap+1, LAPS)}/${LAPS} · ${fmt(raceTime(car))} · última ${fmt(car.last)} · salidas ${car.offs}`
+            + (car.falseStart ? `  ⚠ largada en falso +${PENALTY} s` : '');
+  ctx.fillText(line, x0, 20);
+  ctx.fillStyle = '#2a2d33'; ctx.fillRect(x0, 30, bw*0.45, 10);
+  ctx.fillStyle = car.color; ctx.fillRect(x0, 30, bw*0.45*car.thr, 10);
+  ctx.fillStyle = '#8a8f98'; ctx.font = '11px system-ui';
+  ctx.fillText(`gatillo ${(car.thr*100|0)}%   ${(car.v|0)} px/s`, x0, 56);
+  const gx = x0 + bw*0.5, gw = bw*0.5, max = P.MAXANG.v;
+  const ang = car.off ? 0 : (car.drift||0)*180/Math.PI;
+  ctx.fillStyle = '#2a2d33'; ctx.fillRect(gx, 30, gw, 10);
+  const mid = gx + gw/2, px = Math.max(-1, Math.min(1, ang/max))*gw/2;
+  ctx.fillStyle = Math.abs(ang) > max*0.75 ? '#ff7a2e' : (car.sliding ? '#ffd34d' : '#6c7380');
+  ctx.fillRect(Math.min(mid, mid+px), 30, Math.abs(px), 10);
+  ctx.fillStyle = '#e33'; ctx.fillRect(gx, 28, 2, 14); ctx.fillRect(gx+gw-2, 28, 2, 14);
+  ctx.fillStyle = '#8a8f98';
+  ctx.fillText(car.off ? 'FUERA DE PISTA' : `deriva ${ang.toFixed(0)}°${car.sliding?'  patinando':''}`, gx, 56);
+}
+
+function ghostPanel(x0) {
+  const g = race.ghost;
+  ctx.font = '600 13px system-ui'; ctx.fillStyle = '#c9c9f5';
+  if (!g) { ctx.fillText('Sin fantasma', x0, 20); return; }
+  ctx.fillText(`FANTASMA · ${g.name} · ${fmt(g.time)}`, x0, 20);
+  if (race.phase === 'running' && !player.finished) {
+    const tg = ghostTimeAt(g, player.dist);
+    if (tg != null && player.dist > 30) {
+      // incluye las penalizaciones de ambos, para que coincida con el resultado final
+      const d = (clock - race.t0) - tg + (player.falseStart ? PENALTY : 0) - g.pen;
+      ctx.font = '700 26px system-ui'; ctx.fillStyle = d <= 0 ? '#4cd36a' : '#ff5a4f';
+      ctx.fillText(fmtD(d), x0, 54);
+      ctx.font = '11px system-ui'; ctx.fillStyle = '#8a8f98';
+      ctx.fillText(d <= 0 ? 'adelante del fantasma' : 'atrás del fantasma', x0 + 100, 52);
+    }
+  }
+}
+
 function drawHud() {
   const dpr = view.dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
-  const w = cv.width/dpr;
-  cars.forEach((car, i) => {
-    const x0 = i===0 ? 16 : w/2 + 8, bw = w/2 - 24;
-    ctx.fillStyle = car.color; ctx.font = '600 13px system-ui';
-    ctx.fillText(`${i===0?'ROJO':'AZUL'} · vuelta ${car.lap} · última ${fmt(car.last)} · mejor ${fmt(car.best)} · salidas ${car.offs}`, x0, 20);
-    // acelerador
-    ctx.fillStyle = '#2a2d33'; ctx.fillRect(x0, 30, bw*0.45, 10);
-    ctx.fillStyle = car.color; ctx.fillRect(x0, 30, bw*0.45*car.thr, 10);
-    ctx.fillStyle = '#8a8f98'; ctx.font = '11px system-ui';
-    ctx.fillText(`gatillo ${(car.thr*100|0)}%   ${(car.v|0)} px/s`, x0, 56);
-    // deriva
-    const gx = x0 + bw*0.5, gw = bw*0.5, max = P.MAXANG.v;
-    const ang = car.off ? 0 : (car.drift||0)*180/Math.PI;
-    ctx.fillStyle = '#2a2d33'; ctx.fillRect(gx, 30, gw, 10);
-    const mid = gx + gw/2, px = Math.max(-1, Math.min(1, ang/max))*gw/2;
-    ctx.fillStyle = Math.abs(ang) > max*0.75 ? '#ff7a2e' : (car.sliding ? '#ffd34d' : '#6c7380');
-    ctx.fillRect(Math.min(mid, mid+px), 30, Math.abs(px), 10);
-    ctx.fillStyle = '#e33'; ctx.fillRect(gx, 28, 2, 14); ctx.fillRect(gx+gw-2, 28, 2, 14);
-    ctx.fillStyle = '#8a8f98';
-    ctx.fillText(car.off ? 'FUERA DE PISTA' : `deriva ${ang.toFixed(0)}°${car.sliding?'  patinando':''}`, gx, 56);
-  });
+  const w = cv.width/dpr, bw = w/2 - 24;
+  carPanel(player, 16, bw);
+  if (mode === 'crono') ghostPanel(w/2 + 8);
+  else carPanel(cars[1], w/2 + 8, bw);
+  if (mode !== 'libre') drawRaceOverlay(w, cv.height/dpr);
+}
+
+function box(cx, cy, bw, bh) {
+  ctx.fillStyle = 'rgba(16,18,22,.88)'; ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.roundRect(cx-bw/2, cy-bh/2, bw, bh, 10); ctx.fill(); ctx.stroke();
+}
+
+function drawRaceOverlay(w, hgt) {
+  const cx = w/2, cy = HUD_H + (hgt-HUD_H)/2;
+  ctx.textAlign = 'center';
+  if (race.phase === 'idle') {
+    box(cx, cy, 300, 70);
+    ctx.fillStyle = '#e8e8e8'; ctx.font = '600 18px system-ui'; ctx.fillText('Enter para largar', cx, cy-4);
+    ctx.fillStyle = '#8a8f98'; ctx.font = '12px system-ui';
+    ctx.fillText(`${LAPS} vueltas · no aceleres antes de que se apaguen las luces`, cx, cy+20);
+  }
+  const sinceGo = clock - race.t0;
+  if (race.phase === 'lights' || (race.phase === 'running' && sinceGo < 1)) {
+    const on = race.phase === 'lights' ? Math.min(5, Math.floor((clock - race.lightsStart)/0.8)) : 0;
+    box(cx, cy, 5*46+24, 70);
+    for (let i=0;i<5;i++) {
+      ctx.beginPath(); ctx.arc(cx - 2*46 + i*46, cy, 17, 0, Math.PI*2);
+      ctx.fillStyle = race.phase === 'running' ? '#2fd05a' : (i < on ? '#ff2a1f' : '#2a1414'); ctx.fill();
+    }
+  }
+  if (race.phase === 'done' && race.result) drawResults(cx, cy);
+  ctx.textAlign = 'left';
+}
+
+function drawResults(cx, cy) {
+  const r = race.result;
+  const rows = [];   // [texto, color, fuente]
+  if (mode === 'crono') {
+    rows.push([r.record ? '¡Nuevo récord!' : 'Resultado', r.record ? '#ffd34d' : '#e8e8e8', '700 22px system-ui']);
+    rows.push([`Tiempo ${fmt(player.finishT)}` + (player.falseStart ? `  (incluye +${PENALTY} s de largada en falso)` : ''), '#e8e8e8', '600 15px system-ui']);
+    if (r.vs) {
+      const d = player.finishT - r.vs.time;
+      rows.push([`vs ${r.vs.name}: ${fmtD(d)} s`, d <= 0 ? '#4cd36a' : '#ff5a4f', '600 15px system-ui']);
+    }
+    rows.push(['', '', '']);
+    const mine = lapTimes(player.splits), theirs = r.vs ? lapTimes(r.vs.splits) : null;
+    rows.push([theirs ? 'Vuelta      Vos      Fantasma     Dif' : 'Vuelta      Tiempo', '#8a8f98', '12px monospace']);
+    mine.forEach((t, i) => {
+      const line = theirs ? `  ${i+1}      ${t.toFixed(2).padStart(6)}    ${theirs[i].toFixed(2).padStart(6)}    ${fmtD(t - theirs[i]).padStart(6)}`
+                          : `  ${i+1}      ${t.toFixed(2).padStart(6)}`;
+      rows.push([line, '#e8e8e8', '13px monospace']);
+    });
+  } else {
+    rows.push([`Gana ${r.order[0].name}`, r.order[0].color, '700 22px system-ui']);
+    r.order.forEach((c, i) => rows.push([`${i+1}º ${c.name}  ${fmt(c.finishT)}` + (i ? `  (${fmtD(c.finishT - r.order[0].finishT)})` : '') + (c.falseStart ? `  ⚠ +${PENALTY} s` : ''), c.color, '600 15px system-ui']));
+    rows.push(['', '', '']);
+    rows.push(['Vuelta      ROJO      AZUL', '#8a8f98', '12px monospace']);
+    const a = lapTimes(cars[0].splits), b = lapTimes(cars[1].splits);
+    for (let i=0;i<LAPS;i++) rows.push([`  ${i+1}      ${a[i].toFixed(2).padStart(6)}    ${b[i].toFixed(2).padStart(6)}`, '#e8e8e8', '13px monospace']);
+  }
+  rows.push(['', '', '']);
+  rows.push(['Enter: correr de nuevo', '#8a8f98', '12px system-ui']);
+  const lh = 22, bh = rows.length*lh + 24;
+  box(cx, cy, 420, bh);
+  rows.forEach(([t, c, f], i) => { if (!t) return; ctx.fillStyle = c; ctx.font = f; ctx.fillText(t, cx, cy - bh/2 + 30 + i*lh); });
 }
 
 // ---------- Bucle ----------
@@ -356,46 +702,120 @@ const H = 1/600;
 let lastT = performance.now(), accum = 0;
 function frame(now) {
   accum += Math.min(0.1, (now-lastT)/1000); lastT = now;
-  while (accum >= H) {
-    accum -= H; clock += H;
-    for (const car of cars) { updateThrottle(car, H); stepCar(car, H); }
-  }
-  for (const car of cars) addSkid(car);
+  while (accum >= H) { accum -= H; simStep(); }
+  for (const car of activeCars()) addSkid(car);
 
   ctx.setTransform(1,0,0,1,0,0);
   ctx.fillStyle = '#1f3a24'; ctx.fillRect(0,0,cv.width,cv.height);
   ctx.setTransform(view.sc,0,0,view.sc,view.ox,view.oy);
   drawTrack(); drawSkids();
-  for (const car of cars) drawCar(car);
+  if (mode === 'crono' && race.ghost) {
+    const t = race.phase === 'running' || race.phase === 'done' ? clock - race.t0 : 0;
+    const gp = ghostPose(race.ghost, t);
+    drawCar(gp, '#d6d6ff', 0.45);
+    ctx.fillStyle = 'rgba(214,214,255,.7)'; ctx.font = '12px system-ui'; ctx.fillText(race.ghost.name, gp.x + 14, gp.y - 14);
+  }
+  for (const car of activeCars()) drawCar(carPose(car), car.color);
   drawHud();
   requestAnimationFrame(frame);
 }
 
 // ---------- UI ----------
-const sl = document.getElementById('sliders');
+const $ = id => document.getElementById(id);
+const sliderRefs = {};
 for (const [key, p] of Object.entries(P)) {
   const lab = document.createElement('label');
   lab.innerHTML = `${p.label} <span>${p.v}</span><input type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.v}">`;
   const inp = lab.querySelector('input'), out = lab.querySelector('span');
-  inp.addEventListener('input', () => { p.v = +inp.value; out.textContent = inp.value; });
+  inp.addEventListener('input', () => { if (mode !== 'libre') return; p.v = freeVals[key] = +inp.value; out.textContent = inp.value; });
   inp.addEventListener('keydown', e => e.preventDefault()); // que las flechas no muevan el slider
-  sl.appendChild(lab);
+  sliderRefs[key] = { inp, out };
+  $('sliders').appendChild(lab);
 }
-const copyBtn = document.getElementById('copy');
-copyBtn.onclick = async () => {
-  const text = JSON.stringify(Object.fromEntries(Object.entries(P).map(([k, p]) => [k, p.v])), null, 2);
-  let ok = true;
-  try { await navigator.clipboard.writeText(text); }
+
+function applyParams() {
+  const src = mode === 'libre' ? freeVals : OFFICIAL;
+  for (const k in P) { P[k].v = src[k]; sliderRefs[k].inp.value = src[k]; sliderRefs[k].out.textContent = src[k]; sliderRefs[k].inp.disabled = mode !== 'libre'; }
+  $('sliders').classList.toggle('locked', mode !== 'libre');
+  $('physNote').textContent = mode === 'libre' ? 'Ajustable en modo Libre.' : `Física oficial v${PHYS_VERSION}: bloqueada para que los tiempos sean comparables.`;
+}
+
+const MODE_INFO = {
+  libre:   { hint:'Práctica sin tiempo oficial. Los sliders se pueden tocar.', keys:'Rojo: <kbd>W</kbd> · Azul: <kbd>↑</kbd><br><kbd>R</kbd> reiniciar' },
+  carrera: { hint:`Dos jugadores, ${LAPS} vueltas, cada uno larga en un carril.`, keys:'Rojo: <kbd>W</kbd> · Azul: <kbd>↑</kbd><br><kbd>Enter</kbd> largar · <kbd>R</kbd> reiniciar' },
+  crono:   { hint:`Un jugador, ${LAPS} vueltas, contra un fantasma. Largás en el carril opuesto al suyo.`, keys:'Acelerar: <kbd>W</kbd> o <kbd>↑</kbd><br><kbd>Enter</kbd> largar · <kbd>R</kbd> reiniciar' },
+};
+function setMode(m) {
+  mode = m; store.set('mode', m);
+  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+  $('modeHint').textContent = MODE_INFO[m].hint;
+  $('keysHint').innerHTML = MODE_INFO[m].keys;
+  $('ghostBox').style.display = m === 'crono' ? '' : 'none';
+  player.keys = m === 'crono' ? ['KeyW', 'ArrowUp'] : ['KeyW'];
+  cars[1].keys = ['ArrowUp'];
+  cars[1].active = m !== 'crono';
+  applyParams();
+  resetRace();
+}
+document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { setMode(b.dataset.mode); b.blur(); });
+
+function renderGhostList() {
+  const opts = [['none', 'Sin fantasma', null], ['best', 'Mi mejor', loadGhost('best')], ['last', 'Mi última', loadGhost('last')], ['imported', 'Importado', loadGhost('imported')]];
+  $('ghostList').innerHTML = '';
+  for (const [val, label, g] of opts) {
+    const dis = val !== 'none' && !g;
+    const row = document.createElement('label');
+    row.className = 'radio' + (dis ? ' dis' : '');
+    row.innerHTML = `<input type="radio" name="ghost" value="${val}" ${dis?'disabled':''} ${ghostChoice===val?'checked':''}>
+      <span>${label}${g ? ` <small>· ${g.name.replace(/[<&>"]/g,'')} · ${fmt(g.time)}</small>` : (dis ? ' <small>· todavía no hay</small>' : '')}</span>`;
+    row.querySelector('input').onchange = e => {
+      ghostChoice = val; store.set('ghostChoice', val); e.target.blur();
+      if (race.phase !== 'running' && race.phase !== 'lights') resetRace();
+    };
+    $('ghostList').appendChild(row);
+  }
+  $('expBest').disabled = !opts[1][2];
+  $('expLast').disabled = !opts[2][2];
+}
+
+$('name').value = store.get('name') || '';
+$('name').addEventListener('input', () => store.set('name', $('name').value));
+$('expBest').onclick = e => { e.target.blur(); exportGhost('best'); };
+$('expLast').onclick = e => { e.target.blur(); exportGhost('last'); };
+$('impBtn').onclick = e => { e.target.blur(); $('impText').value = ''; $('impMsg').textContent = ''; $('impDlg').showModal(); };
+$('impCancel').onclick = () => $('impDlg').close();
+$('impOk').onclick = async () => {
+  const err = await importGhost($('impText').value);
+  if (err) { $('impMsg').textContent = err; return; }
+  $('impDlg').close(); toast('Fantasma importado y seleccionado.');
+};
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
   catch {
     // Fallback para cuando el portapapeles no está disponible (p. ej. abierto como file:// en algunos navegadores)
     const ta = Object.assign(document.createElement('textarea'), { value: text });
     document.body.appendChild(ta); ta.select();
-    ok = document.execCommand('copy'); ta.remove();
+    const ok = document.execCommand('copy'); ta.remove(); return ok;
   }
+}
+let toastTimer;
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+const copyBtn = $('copy');
+copyBtn.onclick = async () => {
+  const text = JSON.stringify(Object.fromEntries(Object.entries(P).map(([k, p]) => [k, p.v])), null, 2);
+  const ok = await copyText(text);
   copyBtn.textContent = ok ? '¡Copiado!' : 'No se pudo copiar';
   copyBtn.blur();
   setTimeout(() => copyBtn.textContent = 'Copiar parámetros', 1500);
 };
+
+renderGhostList();
+setMode(['libre','carrera','crono'].includes(store.get('mode')) ? store.get('mode') : 'libre');
 resize();
 requestAnimationFrame(frame);
 </script>
