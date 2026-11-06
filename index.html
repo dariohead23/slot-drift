@@ -48,10 +48,18 @@
     <h2>Modo</h2>
     <div class="seg">
       <button data-mode="libre">Libre</button>
-      <button data-mode="carrera">Carrera 2J</button>
       <button data-mode="crono">Contrarreloj</button>
     </div>
     <div class="hint" id="modeHint"></div>
+
+    <h2>Cámara <kbd>C</kbd></h2>
+    <div class="seg">
+      <button data-cam="follow">Seguir</button>
+      <button data-cam="full">Pista completa</button>
+    </div>
+    <label class="hint" style="display:block;margin-top:8px">Zoom <span id="zoomVal" style="float:right"></span>
+      <input id="zoom" type="range" min="1.2" max="4" step="0.1">
+    </label>
 
     <div id="ghostBox">
       <h2>Fantasma</h2>
@@ -194,7 +202,7 @@ function laneAt(lane, s) {
 }
 
 // ---------- Estado ----------
-let mode = 'libre';            // 'libre' | 'carrera' | 'crono'
+let mode = 'libre';            // 'libre' | 'crono'
 let clock = 0;
 let skids = [];
 const race = { phase:'idle', t0:0, lightsStart:0, goAt:0, ghost:null, rec:null, recStep:0, recDone:false, result:null };
@@ -202,7 +210,7 @@ const race = { phase:'idle', t0:0, lightsStart:0, goAt:0, ghost:null, rec:null, 
 function makeCar(name, color) {
   return { name, color, keys:[], start:0, active:true };
 }
-const cars = [ makeCar('ROJO', '#e8413c'), makeCar('AZUL', '#3c8ee8') ];
+const cars = [ makeCar('ROJO', '#e8413c') ];
 const player = cars[0];
 const activeCars = () => cars.filter(c => c.active);
 
@@ -220,6 +228,7 @@ addEventListener('keydown', e => {
   if (['ArrowUp','ArrowDown','Space','Enter'].includes(e.code)) e.preventDefault();
   down.add(e.code);
   if (e.code==='KeyR') resetRace();
+  if (e.code==='KeyC') setCam(camMode==='follow' ? 'full' : 'follow');
   if ((e.code==='Enter' || e.code==='NumpadEnter') && mode!=='libre' && !e.repeat) {
     if (race.phase==='done') resetRace();
     if (race.phase==='idle') startLights();
@@ -312,6 +321,7 @@ function stepOff(car, h) {
   o.x += o.vx*h; o.y += o.vy*h; o.yaw += o.w*h;
   if (sp < 5 && o.t > 1.2) {   // el "comisario" lo vuelve a poner en la pista
     Object.assign(car, { s:o.s, v:0, b:geoAngle(laneAt(route, o.s).k), bd:0, thr:0, sliding:false, off:null });
+    cam.snap = true;   // la cámara salta al lugar donde reaparece, en vez de recorrer la pista
   }
 }
 
@@ -326,9 +336,9 @@ function resetRace() {
     race.ghost = null;
     player.start = 0;
   }
-  cars[1].start = route.half;
   cars.forEach(resetCar);
   skids = [];
+  cam.snap = true;
 }
 
 function startLights() {
@@ -376,8 +386,6 @@ function endRace() {
     if (record) saveGhost('best', g);
     race.result = { record, prevBest, vs: race.ghost };
     renderGhostList();
-  } else {
-    race.result = { order: activeCars().slice().sort((a,b) => a.finishT - b.finishT) };
   }
 }
 
@@ -502,15 +510,18 @@ async function importGhost(text) {
 
 // ---------- Dibujo ----------
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-let view = { sc:1, ox:0, oy:0, dpr:1 };
+let view = { sc:1, ox:0, oy:0, dpr:1, fit:1, w:1, h:1 };
 const HUD_H = 70;
+let world = { minx:0, maxx:1, miny:0, maxy:1 };
 function resize() {
   const r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
   cv.width = r.width*dpr; cv.height = r.height*dpr;
   const xs = center.map(p=>p.x), ys = center.map(p=>p.y), m = LANE+60;
-  const minx=Math.min(...xs)-m, maxx=Math.max(...xs)+m, miny=Math.min(...ys)-m, maxy=Math.max(...ys)+m;
-  const sc = Math.min(r.width/(maxx-minx), (r.height-HUD_H)/(maxy-miny));
-  view = { sc: sc*dpr, ox: (r.width - (maxx-minx)*sc)/2*dpr - minx*sc*dpr, oy: (HUD_H + (r.height-HUD_H-(maxy-miny)*sc)/2)*dpr - miny*sc*dpr, dpr };
+  world = { minx:Math.min(...xs)-m, maxx:Math.max(...xs)+m, miny:Math.min(...ys)-m, maxy:Math.max(...ys)+m };
+  // fit = escala (px CSS por unidad de mundo) con la que entra la pista completa
+  const fit = Math.min(r.width/(world.maxx-world.minx), (r.height-HUD_H)/(world.maxy-world.miny));
+  view = { ...view, fit, dpr, w:r.width, h:r.height };
+  cam.snap = true;
 }
 addEventListener('resize', resize);
 
@@ -518,6 +529,42 @@ function carPose(car) {
   if (car.off) return { x:car.off.x, y:car.off.y, yaw:car.off.yaw };
   const q = laneAt(route, car.s);
   return { x:q.x, y:q.y, yaw:q.th - car.b };
+}
+
+// ---------- Cámara ----------
+// 'full': se ve la pista entera. 'follow': zoom sobre tu coche, mirando un poco hacia
+// adelante según la velocidad. El movimiento es suave (exponencial) y el cambio de modo
+// hace la transición con zoom animado.
+const cam = { x:0, y:0, s:1, snap:true };
+let camMode = store.get('cam') === 'full' ? 'full' : 'follow';
+let camZoom = Math.min(4, Math.max(1.2, +store.get('camZoom') || 2.2));
+const CAM_RATE = 10;       // rapidez con la que la cámara alcanza su objetivo (1/s)
+const CAM_LOOK = 0.1;      // segundos de velocidad que se adelanta la cámara; con RATE×LOOK = 1
+                           // el coche queda centrado en las rectas
+
+function camTarget() {
+  const fit = view.fit;
+  if (camMode === 'full') return { x:(world.minx+world.maxx)/2, y:(world.miny+world.maxy)/2, s:fit };
+  const q = carPose(player);
+  // velocidad real del coche: sobre la ranura, o en vuelo si se salió de la pista
+  let vx, vy;
+  if (player.off) { vx = player.off.vx; vy = player.off.vy; }
+  else { const th = laneAt(route, player.s).th; vx = Math.cos(th)*player.v; vy = Math.sin(th)*player.v; }
+  return { x:q.x + vx*CAM_LOOK, y:q.y + vy*CAM_LOOK, s:fit*camZoom };
+}
+
+function updateCamera(dt) {
+  const t = camTarget();
+  if (cam.snap) { Object.assign(cam, t); cam.snap = false; }
+  else {
+    const a = 1 - Math.exp(-dt*CAM_RATE);
+    cam.x += (t.x-cam.x)*a; cam.y += (t.y-cam.y)*a;
+    cam.s *= Math.pow(t.s/cam.s, a);          // el zoom se interpola en escala logarítmica
+  }
+  const sc = cam.s*view.dpr;
+  view.sc = sc;
+  view.ox = view.w/2*view.dpr - cam.x*sc;
+  view.oy = (HUD_H + (view.h-HUD_H)/2)*view.dpr - cam.y*sc;
 }
 
 function pathOf(xs, ys) {
@@ -631,7 +678,6 @@ function drawHud() {
   const w = cv.width/dpr, bw = w/2 - 24;
   carPanel(player, 16, bw);
   if (mode === 'crono') ghostPanel(w/2 + 8);
-  else carPanel(cars[1], w/2 + 8, bw);
   if (mode !== 'libre') drawRaceOverlay(w, cv.height/dpr);
 }
 
@@ -680,13 +726,6 @@ function drawResults(cx, cy) {
                           : `  ${i+1}      ${t.toFixed(2).padStart(6)}`;
       rows.push([line, '#e8e8e8', '13px monospace']);
     });
-  } else {
-    rows.push([`Gana ${r.order[0].name}`, r.order[0].color, '700 22px system-ui']);
-    r.order.forEach((c, i) => rows.push([`${i+1}º ${c.name}  ${fmt(c.finishT)}` + (i ? `  (${fmtD(c.finishT - r.order[0].finishT)})` : '') + (c.falseStart ? `  ⚠ +${PENALTY} s` : ''), c.color, '600 15px system-ui']));
-    rows.push(['', '', '']);
-    rows.push(['Vuelta      ROJO      AZUL', '#8a8f98', '12px monospace']);
-    const a = lapTimes(cars[0].splits), b = lapTimes(cars[1].splits);
-    for (let i=0;i<LAPS;i++) rows.push([`  ${i+1}      ${a[i].toFixed(2).padStart(6)}    ${b[i].toFixed(2).padStart(6)}`, '#e8e8e8', '13px monospace']);
   }
   rows.push(['', '', '']);
   rows.push(['Enter: correr de nuevo', '#8a8f98', '12px system-ui']);
@@ -701,12 +740,13 @@ function drawResults(cx, cy) {
 const H = 1/600;
 let lastT = performance.now(), accum = 0;
 function frame(now) {
-  accum += Math.min(0.1, (now-lastT)/1000); lastT = now;
+  const dtr = Math.min(0.1, (now-lastT)/1000); accum += dtr; lastT = now;
   while (accum >= H) { accum -= H; simStep(); }
   for (const car of activeCars()) addSkid(car);
 
   ctx.setTransform(1,0,0,1,0,0);
   ctx.fillStyle = '#1f3a24'; ctx.fillRect(0,0,cv.width,cv.height);
+  updateCamera(dtr);
   ctx.setTransform(view.sc,0,0,view.sc,view.ox,view.oy);
   drawTrack(); drawSkids();
   if (mode === 'crono' && race.ghost) {
@@ -741,9 +781,8 @@ function applyParams() {
 }
 
 const MODE_INFO = {
-  libre:   { hint:'Práctica sin tiempo oficial. Los sliders se pueden tocar.', keys:'Rojo: <kbd>W</kbd> · Azul: <kbd>↑</kbd><br><kbd>R</kbd> reiniciar' },
-  carrera: { hint:`Dos jugadores, ${LAPS} vueltas, cada uno larga en un carril.`, keys:'Rojo: <kbd>W</kbd> · Azul: <kbd>↑</kbd><br><kbd>Enter</kbd> largar · <kbd>R</kbd> reiniciar' },
-  crono:   { hint:`Un jugador, ${LAPS} vueltas, contra un fantasma. Largás en el carril opuesto al suyo.`, keys:'Acelerar: <kbd>W</kbd> o <kbd>↑</kbd><br><kbd>Enter</kbd> largar · <kbd>R</kbd> reiniciar' },
+  libre: { hint:'Práctica sin tiempo oficial. Los sliders se pueden tocar.', keys:'Acelerar: <kbd>W</kbd> o <kbd>↑</kbd><br><kbd>R</kbd> reiniciar' },
+  crono: { hint:`${LAPS} vueltas contra un fantasma. Largás en el carril opuesto al suyo.`, keys:'Acelerar: <kbd>W</kbd> o <kbd>↑</kbd><br><kbd>Enter</kbd> largar · <kbd>R</kbd> reiniciar' },
 };
 function setMode(m) {
   mode = m; store.set('mode', m);
@@ -751,9 +790,7 @@ function setMode(m) {
   $('modeHint').textContent = MODE_INFO[m].hint;
   $('keysHint').innerHTML = MODE_INFO[m].keys;
   $('ghostBox').style.display = m === 'crono' ? '' : 'none';
-  player.keys = m === 'crono' ? ['KeyW', 'ArrowUp'] : ['KeyW'];
-  cars[1].keys = ['ArrowUp'];
-  cars[1].active = m !== 'crono';
+  player.keys = ['KeyW', 'ArrowUp'];
   applyParams();
   resetRace();
 }
@@ -814,8 +851,19 @@ copyBtn.onclick = async () => {
   setTimeout(() => copyBtn.textContent = 'Copiar parámetros', 1500);
 };
 
+function setCam(m) {
+  camMode = m; store.set('cam', m);
+  document.querySelectorAll('[data-cam]').forEach(b => b.classList.toggle('on', b.dataset.cam === m));
+  $('zoom').disabled = m === 'full';
+}
+document.querySelectorAll('[data-cam]').forEach(b => b.onclick = () => { setCam(b.dataset.cam); b.blur(); });
+$('zoom').value = camZoom; $('zoomVal').textContent = camZoom.toFixed(1) + '×';
+$('zoom').addEventListener('input', () => { camZoom = +$('zoom').value; $('zoomVal').textContent = camZoom.toFixed(1) + '×'; store.set('camZoom', camZoom); });
+$('zoom').addEventListener('keydown', e => e.preventDefault());
+setCam(camMode);
+
 renderGhostList();
-setMode(['libre','carrera','crono'].includes(store.get('mode')) ? store.get('mode') : 'libre');
+setMode(['libre','crono'].includes(store.get('mode')) ? store.get('mode') : 'libre');
 resize();
 requestAnimationFrame(frame);
 </script>
