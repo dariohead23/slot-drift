@@ -152,22 +152,98 @@ const TRACKS = [
     structures: [   // el centro de cada recta larga es el punto donde se cruzan
       { kind:'tunnel', piece:0, from:EIGHT.D-75,  to:EIGHT.D+75 },
       { kind:'bridge', piece:4, from:EIGHT.D-105, to:EIGHT.D+105 } ] },
+  // Boceto del usuario (1 px del dibujo = 1 unidad). Va en sentido horario. Tiene un lazo chico
+  // (radio 82), una vuelta en U que la recta de bajada cruza por encima, un gancho con S y una
+  // serpiente de dos S. Giro neto de 720°, así que un carril es mucho más corto que el otro y
+  // hace falta cruce de carriles (en la recta de la derecha).
+  { id:'lazo-1', name:'El Lazo · lazo, gancho y serpiente',
+    close: [0, 10],                    // largo de la recta superior y de la izquierda: lo calcula closePieces
+    pieces: [
+      ['S',0],                         //  0 recta superior (largada); su largo lo fija 'close'
+      ['A',90,195],                    //  1 curva arriba a la derecha
+      ['S',430],                       //  2 recta larga de la derecha (cruce de carriles)
+      ['A',180,165],                   //  3 vuelta en U grande
+      ['A',180,82],                    //  4 lazo chico
+      ['S',350],                       //  5 recta de bajada (cruza la U)
+      ['SS',238,-169],                 //  6 S del gancho, hacia la izquierda del rumbo (este)
+      ['A',90,175],                    //  7 curva del gancho
+      ['S',355],                       //  8 recta inferior
+      ['A',90,190],                    //  9 curva abajo a la izquierda
+      ['S',0],                         // 10 recta izquierda; su largo lo fija 'close'
+      ['SS',350,156],                  // 11 primera S de la serpiente, hacia la derecha (este)
+      ['SS',350,-156],                 // 12 segunda S, de vuelta al oeste
+      ['A',90,175] ],                  // 13 curva arriba a la izquierda
+    swap: { piece:2, len:260 },
+    cross: { under:'first', tunnelHalf:75, bridgeHalf:105 } },   // la U va por el túnel; la bajada, por el puente
 ];
 const DEFAULT_TRACK = TRACKS[0].id;
 
-const pieceLen = p => p[0]==='S' ? p[1] : Math.abs(p[1]*Math.PI/180)*p[2];
+// Tipos de pieza:
+//   ['S', largo]            recta
+//   ['A', grados, radio]    arco de radio constante; el signo del ángulo da el sentido
+//                           (positivo = gira a la derecha, o sea en sentido horario en pantalla)
+//   ['SS', largo, lateral]  S suave: dos arcos iguales de signo opuesto que desplazan la pista
+//                           'lateral' hacia un costado (positivo = a la derecha del rumbo) a lo
+//                           largo de 'largo', y el rumbo vuelve a ser el de antes. El ángulo y el
+//                           radio se resuelven solos para que empalme exacto.
+function primitives(p) {
+  if (p[0] !== 'SS') return [p];
+  const len = p[1], lat = p[2];
+  if (!lat) return [['S', len]];
+  const th = 2*Math.atan(Math.abs(lat)/len);
+  const R = len/(2*Math.sin(th)), a = th*180/Math.PI*Math.sign(lat);
+  return [['A', a, R], ['A', -a, R]];
+}
+const pieceLen = p => p[0]==='SS' ? primitives(p).reduce((t, q) => t + pieceLen(q), 0)
+                    : p[0]==='S' ? p[1] : Math.abs(p[1]*Math.PI/180)*p[2];
+
+// Paso exacto por un arco o una recta, en el marco local del rumbo actual.
+function stepExact(st, q) {
+  let dx, dy, dth = 0;
+  if (q[0] === 'S') { dx = q[1]; dy = 0; }
+  else { const a = Math.abs(q[1])*Math.PI/180, sg = Math.sign(q[1]); dx = q[2]*Math.sin(a); dy = sg*q[2]*(1-Math.cos(a)); dth = sg*a; }
+  st.x += Math.cos(st.th)*dx - Math.sin(st.th)*dy; st.y += Math.sin(st.th)*dx + Math.cos(st.th)*dy; st.th += dth;
+}
+
+// def.close = [i, j]: ajusta el largo de las rectas i y j (que no deben ser paralelas) para que el
+// circuito cierre exacto. Estimar rectas a ojo nunca cierra; así solo hay que elegir las curvas.
+function closePieces(def) {
+  const [ia, ib] = def.close, pcs = def.pieces.map(p => p.slice());
+  pcs[ia][1] = 0; pcs[ib][1] = 0;
+  const st = { x:0, y:0, th:def.th0 || 0 }, head = [];
+  pcs.forEach((p, i) => { head[i] = st.th; for (const q of primitives(p)) stepExact(st, q); });
+  const ua = [Math.cos(head[ia]), Math.sin(head[ia])], ub = [Math.cos(head[ib]), Math.sin(head[ib])];
+  const det = ua[0]*ub[1] - ua[1]*ub[0];
+  if (Math.abs(det) < 1e-6) throw new Error('close: las rectas ' + ia + ' y ' + ib + ' son paralelas');
+  const a = (-st.x*ub[1] + st.y*ub[0])/det, b = (-ua[0]*st.y + ua[1]*st.x)/det;
+  if (a < 0 || b < 0) console.warn('close: largo negativo en', def.id, a.toFixed(1), b.toFixed(1));
+  pcs[ia][1] = a; pcs[ib][1] = b;
+  return pcs;
+}
+
+// Punto donde la pista se cruza consigo misma: el par de puntos más cercano que no son contiguos.
+function findCrossing(pts) {
+  const n = pts.length, gap = 400; let best = Infinity, bi = 0, bj = 0;
+  for (let i=0;i<n;i++) for (let j=i+gap; j<n && n-(j-i) >= gap; j++) {
+    const dx = pts[i].x-pts[j].x, dy = pts[i].y-pts[j].y, d = dx*dx + dy*dy;
+    if (d < best) { best = d; bi = i; bj = j; }
+  }
+  return [bi, bj];
+}
 
 function buildCenter(def) {
   const pts = [], pieceStart = []; let x=0, y=0, th=def.th0 || 0;
-  for (const p of def.pieces) {
+  for (const piece of def.pieces) {
     pieceStart.push(pts.length);
-    const len = pieceLen(p);
-    const k = p[0]==='S' ? 0 : Math.sign(p[1])/p[2];
-    const n = Math.max(1, Math.round(len));
-    const ds = len/n;
-    for (let i=0;i<n;i++) {
-      pts.push({x,y,th,k,arc:k!==0,lv:0});
-      x += Math.cos(th+k*ds/2)*ds; y += Math.sin(th+k*ds/2)*ds; th += k*ds;
+    for (const p of primitives(piece)) {
+      const len = pieceLen(p);
+      const k = p[0]==='S' ? 0 : Math.sign(p[1])/p[2];
+      const n = Math.max(1, Math.round(len));
+      const ds = len/n;
+      for (let i=0;i<n;i++) {
+        pts.push({x,y,th,k,arc:k!==0,lv:0});
+        x += Math.cos(th+k*ds/2)*ds; y += Math.sin(th+k*ds/2)*ds; th += k*ds;
+      }
     }
   }
   // nivel de cada punto: 0 suelo, -1 túnel, +1 puente
@@ -175,6 +251,14 @@ function buildCenter(def) {
     const a = pieceStart[st.piece], n = (pieceStart[st.piece+1] ?? pts.length) - a, len = pieceLen(def.pieces[st.piece]);
     const i0 = a + Math.round(st.from/len*n), i1 = a + Math.round(st.to/len*n);
     for (let i=Math.max(a,i0); i<=Math.min(a+n-1,i1); i++) pts[i].lv = st.kind === 'bridge' ? 1 : -1;
+  }
+  // def.cross: busca solo dónde la pista se cruza consigo misma. El tramo que se recorre primero
+  // va por abajo (túnel) y el otro por arriba (puente); con under:'second' se invierte.
+  if (def.cross) {
+    const [i, j] = findCrossing(pts), c = def.cross, tunnelFirst = c.under !== 'second';
+    const mark = (k, half, v) => { for (let q=Math.max(0,k-half); q<=Math.min(pts.length-1,k+half); q++) pts[q].lv = v; };
+    mark(i, tunnelFirst ? c.tunnelHalf : c.bridgeHalf, tunnelFirst ? -1 : 1);
+    mark(j, tunnelFirst ? c.bridgeHalf : c.tunnelHalf, tunnelFirst ? 1 : -1);
   }
   return { center: pts, pieceStart };
 }
@@ -209,7 +293,8 @@ function makeRoute(center, laps, offsetAt) {
   return { s, x, y, th, k: ks, lv, len: acc, half: laps === 2 ? s[n] : null };
 }
 
-function buildTrack(def) {
+function buildTrack(def0) {
+  const def = def0.close ? { ...def0, pieces: closePieces(def0) } : def0;
   const { center, pieceStart } = buildCenter(def);
   let routes, starts, mid = null, lapLen;
   if (def.swap) {
