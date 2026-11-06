@@ -158,25 +158,25 @@ const TRACKS = [
   // Boceto del usuario (1 px del dibujo = 1 unidad). Va en sentido horario. Tiene un lazo chico
   // (radio 82), una vuelta en U que la recta de bajada cruza por encima, un gancho con S y una
   // serpiente de dos S. Giro neto de 720°, así que un carril es mucho más corto que el otro y
-  // hace falta cruce de carriles (en la recta de la derecha).
+  // hace falta cruce de carriles (en una recta horizontal, la inferior).
   { id:'lazo-1', name:'El Lazo · lazo, gancho y serpiente',
     close: [0, 10],                    // largo de la recta superior y de la izquierda: lo calcula closePieces
     pieces: [
       ['S',0],                         //  0 recta superior (largada); su largo lo fija 'close'
       ['A',90,195],                    //  1 curva arriba a la derecha
-      ['S',430+STRETCH.y],             //  2 recta larga de la derecha (cruce de carriles)
+      ['S',430+STRETCH.y],             //  2 recta larga de la derecha
       ['A',180,165],                   //  3 vuelta en U grande
       ['A',180,82],                    //  4 lazo chico
       ['S',350],                       //  5 recta de bajada (cruza la U)
       ['SS',238,-169],                 //  6 S del gancho, hacia la izquierda del rumbo (este)
       ['A',90,175],                    //  7 curva del gancho
-      ['S',355+STRETCH.x],             //  8 recta inferior
+      ['S',355+STRETCH.x],             //  8 recta inferior (cruce de carriles)
       ['A',90,190],                    //  9 curva abajo a la izquierda
       ['S',0],                         // 10 recta izquierda; su largo lo fija 'close'
       ['SS',350,156],                  // 11 primera S de la serpiente, hacia la derecha (este)
       ['SS',350,-156],                 // 12 segunda S, de vuelta al oeste
       ['A',90,175] ],                  // 13 curva arriba a la izquierda
-    swap: { piece:2, len:260 },
+    swap: { piece:8, len:260 },        // cruce de carriles en la recta inferior (con 0 iría en la superior)
     cross: { under:'first', tunnelHalf:75, bridgeHalf:105 } },   // la U va por el túnel; la bajada, por el puente
 ];
 const DEFAULT_TRACK = TRACKS[0].id;
