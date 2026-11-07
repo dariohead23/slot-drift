@@ -886,11 +886,9 @@ function drawCar({ x, y, yaw }, i, alpha = 1) {
   if (spr) {
     const w = CAR_LEN, h = CAR_LEN/spr.aspect, need = w*view.sc;        // largo en píxeles de pantalla
     let lv = spr.levels[0]; for (const l of spr.levels) if (l.w >= need) lv = l;   // el nivel más chico que alcanza
-    if (alpha === 1) { ctx.fillStyle = 'rgba(0,0,0,.30)'; ctx.beginPath(); ctx.ellipse(CAR_FRONT - w/2 + 2, 2, w/2 + 1, h/2, 0, 0, Math.PI*2); ctx.fill(); }
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(lv.c, CAR_FRONT - w, -h/2, w, h);
   } else {   // mientras carga el sprite: el coche dibujado
-    if (alpha === 1) { ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(-L-10+2, -10+2, L+20, 20); }
     ctx.fillStyle = '#111';
     ctx.fillRect(-L-5, -12, 11, 5); ctx.fillRect(-L-5, 7, 11, 5);
     ctx.fillRect(-3, -11, 9, 4); ctx.fillRect(-3, 7, 9, 4);
