@@ -26,6 +26,13 @@
   .radio { display:flex; gap:8px; align-items:center; margin:5px 0; font-size:13px; cursor:pointer; }
   .radio.dis { opacity:.4; cursor:default; }
   .radio small { color:var(--muted); }
+  #carGrid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+  #carGrid button { padding:5px 3px; background:#14161a; border:1px solid #333; border-radius:6px; line-height:0; }
+  #carGrid button:hover { background:#1c2027; }
+  #carGrid button.on { background:#2b3140; border-color:#9aa6bd; }
+  #carGrid img { width:100%; display:block; }
+  .credit { margin-top:18px; }
+  .credit a { color:#9aa4b5; }
   select { width:100%; padding:7px; background:#14161a; color:var(--fg); border:1px solid #444; border-radius:6px; font:inherit; }
   #name { width:100%; margin-top:4px; padding:6px; background:#14161a; color:var(--fg); border:1px solid #444; border-radius:6px; font:inherit; }
   #sliders label { display:block; margin:10px 0 2px; font-size:12px; }
@@ -65,6 +72,9 @@
       <input id="zoom" type="range" min="0.7" max="3" step="0.1">
     </label>
 
+    <h2>Auto</h2>
+    <div id="carGrid"></div>
+
     <div id="ghostBox">
       <h2>Fantasma</h2>
       <div id="ghostList"></div>
@@ -86,6 +96,7 @@
     <div id="sliders"></div>
     <button id="copy">Copiar parámetros</button>
     <div class="hint">El indicador de deriva muestra cuánto se cruza la cola. Si llega a la línea roja, el coche se sale.</div>
+    <div class="hint credit">Autos: <a href="https://www.magnific.com/free-vector/sport-cars-top-view-set_3797254.htm" target="_blank" rel="noopener">Image by macrovector on Magnific</a></div>
   </div>
 </div>
 
@@ -342,7 +353,7 @@ let skids = [];
 const race = { phase:'idle', t0:0, lightsStart:0, goAt:0, ghost:null, rec:null, recStep:0, recDone:false, result:null };
 
 function makeCar(name, color) {
-  return { name, color, keys:[], start:0, lane:0, active:true };
+  return { name, color, keys:[], start:0, lane:0, active:true, sprite:0 };
 }
 const cars = [ makeCar('ROJO', '#e8413c') ];
 const player = cars[0];
@@ -510,7 +521,7 @@ function endRace() {
   race.phase = 'done';
   if (mode === 'crono') {
     const g = {
-      fmt:1, track:T.id, phys:PHYS_VERSION, name: playerName(), date: new Date().toISOString(),
+      fmt:1, track:T.id, phys:PHYS_VERSION, name: playerName(), date: new Date().toISOString(), car: player.sprite,
       time: player.finishT, pen: player.falseStart ? PENALTY : 0, splits: player.splits.slice(),
       startLane: player.lane, hz: GHOST_HZ,
       dist: Float32Array.from(race.rec.dist), b: Float32Array.from(race.rec.b), off: Uint8Array.from(race.rec.off),
@@ -588,6 +599,8 @@ function ghostToJSON(g) { const o = { ...g }; for (const k in ARR) o[k] = u8ToB6
 function ghostFromJSON(str) {
   const o = JSON.parse(str);
   for (const [k, T] of Object.entries(ARR)) o[k] = new T(b64ToU8(o[k]).buffer);
+  // el auto viene de afuera cuando se importa un fantasma: si no es un índice válido, se ignora
+  if (!(Number.isInteger(o.car) && o.car >= 0 && o.car < CARS.length)) delete o.car;
   return o;
 }
 function validGhost(g) {
@@ -816,16 +829,61 @@ function drawBridges() {
   for (const rt of new Set(T.routes)) drawSlots(rt, v => v > 0);
 }
 
-function drawCar({ x, y, yaw }, color, alpha = 1) {
+// Autos: los 12 de "Sport Cars Top View" (macrovector, vía Magnific), recortados como sprites de
+// 256 px con el frente a la derecha. 'short' es el rótulo del HUD y 'color' su acento.
+const CARS = [
+  { name:'Superdeportivo blanco',      short:'BLANCO',    color:'#e8e8e8' },
+  { name:'Amarillo',                   short:'AMARILLO',  color:'#ffd23f' },
+  { name:'Blanco con alerón',          short:'ALERÓN',    color:'#e8e8e8' },
+  { name:'Azul y rojo',                short:'AZUL/ROJO', color:'#3c8ee8' },
+  { name:'Celeste',                    short:'CELESTE',   color:'#4cc3e8' },
+  { name:'Blanco con franjas negras',  short:'FRANJAS',   color:'#e8e8e8' },
+  { name:'Fórmula roja',               short:'FÓRMULA',   color:'#e8413c' },
+  { name:'Amarillo con franjas rojas', short:'RALLY',     color:'#ffb000' },
+  { name:'Blanco, ventana negra',      short:'VENTANA',   color:'#e8e8e8' },
+  { name:'Blanco, techo negro',        short:'TECHO',     color:'#e8e8e8' },
+  { name:'Azul petróleo',              short:'PETRÓLEO',  color:'#2aa6c0' },
+  { name:'Blanco, capó',               short:'CAPÓ',      color:'#e8e8e8' },
+];
+const CAR_LEN = 47, CAR_FRONT = 12;   // el sprite ocupa de x = -35 a x = +12 en el marco del coche (la guía está en x = 0)
+const spriteUrl = i => 'assets/cars/car' + String(i).padStart(2, '0') + '.png';
+const sprites = CARS.map((c, i) => {
+  const o = { levels:null, aspect:2.1 };
+  if (typeof Image === 'undefined') return o;
+  const im = new Image();
+  im.onload = () => {
+    o.aspect = im.naturalWidth / im.naturalHeight;
+    // mipmaps: bajar de 256 a ~46 px de un solo salto se ve granulado; se achica a la mitad por vez
+    const lv = [{ c: im, w: im.naturalWidth }];
+    for (let w = im.naturalWidth/2; w >= 32; w /= 2) {
+      const cnv = document.createElement('canvas'); cnv.width = w; cnv.height = Math.round(w/o.aspect);
+      const g = cnv.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(lv[lv.length-1].c, 0, 0, cnv.width, cnv.height);
+      lv.push({ c: cnv, w });
+    }
+    o.levels = lv;
+  };
+  im.src = spriteUrl(i);
+  return o;
+});
+const ghostCar = g => Number.isInteger(g.car) ? g.car : 0;
+
+function drawCar({ x, y, yaw }, i, alpha = 1) {
+  const spr = sprites[i] && sprites[i].levels ? sprites[i] : null;
   ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.rotate(yaw);
-  if (alpha === 1) { ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(-L-10+2, -10+2, L+20, 20); }
-  ctx.fillStyle = '#111';
-  ctx.fillRect(-L-5, -12, 11, 5); ctx.fillRect(-L-5, 7, 11, 5);
-  ctx.fillRect(-3, -11, 9, 4); ctx.fillRect(-3, 7, 9, 4);
-  ctx.fillStyle = color;
-  ctx.beginPath(); ctx.moveTo(10, -6); ctx.lineTo(10, 6); ctx.lineTo(-2, 9); ctx.lineTo(-L-9, 9); ctx.lineTo(-L-9, -9); ctx.lineTo(-2, -9); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(-L+2, -5, 12, 10);
-  ctx.fillStyle = '#ffd34d'; ctx.fillRect(6, -2, 6, 4); // guía
+  if (spr) {
+    const w = CAR_LEN, h = CAR_LEN/spr.aspect, need = w*view.sc;        // largo en píxeles de pantalla
+    let lv = spr.levels[0]; for (const l of spr.levels) if (l.w >= need) lv = l;   // el nivel más chico que alcanza
+    if (alpha === 1) { ctx.fillStyle = 'rgba(0,0,0,.30)'; ctx.beginPath(); ctx.ellipse(CAR_FRONT - w/2 + 2, 2, w/2 + 1, h/2, 0, 0, Math.PI*2); ctx.fill(); }
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(lv.c, CAR_FRONT - w, -h/2, w, h);
+  } else {   // mientras carga el sprite: el coche dibujado
+    if (alpha === 1) { ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(-L-10+2, -10+2, L+20, 20); }
+    ctx.fillStyle = '#111';
+    ctx.fillRect(-L-5, -12, 11, 5); ctx.fillRect(-L-5, 7, 11, 5);
+    ctx.fillRect(-3, -11, 9, 4); ctx.fillRect(-3, 7, 9, 4);
+    ctx.fillStyle = CARS[i].color;
+    ctx.beginPath(); ctx.moveTo(10, -6); ctx.lineTo(10, 6); ctx.lineTo(-2, 9); ctx.lineTo(-L-9, 9); ctx.lineTo(-L-9, -9); ctx.lineTo(-2, -9); ctx.closePath(); ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -957,11 +1015,11 @@ function drawCars(pred) {
     const t = race.phase === 'running' || race.phase === 'done' ? clock - race.t0 : 0;
     const gp = ghostPose(race.ghost, t);
     if (pred(gp.lv)) {
-      drawCar(gp, '#d6d6ff', 0.45);
+      drawCar(gp, ghostCar(race.ghost), 0.45);
       ctx.fillStyle = 'rgba(214,214,255,.7)'; ctx.font = '12px system-ui'; ctx.fillText(race.ghost.name, gp.x + 14, gp.y - 14);
     }
   }
-  for (const car of activeCars()) { const q = carPose(car); if (pred(q.lv)) drawCar(q, car.color); }
+  for (const car of activeCars()) { const q = carPose(car); if (pred(q.lv)) drawCar(q, car.sprite); }
 }
 
 // ---------- Bucle ----------
@@ -1088,6 +1146,20 @@ copyBtn.onclick = async () => {
   copyBtn.blur();
   setTimeout(() => copyBtn.textContent = 'Copiar parámetros', 1500);
 };
+
+function selectCar(i) {
+  i = Math.min(CARS.length-1, Math.max(0, i|0));
+  player.sprite = i; player.color = CARS[i].color; player.name = CARS[i].short;
+  store.set('car', i);
+  document.querySelectorAll('#carGrid button').forEach((b, k) => b.classList.toggle('on', k === i));
+}
+CARS.forEach((c, i) => {
+  const b = document.createElement('button'); b.title = c.name;
+  b.innerHTML = `<img src="${spriteUrl(i)}" alt="${c.name}">`;
+  b.onclick = () => { selectCar(i); b.blur(); };
+  $('carGrid').appendChild(b);
+});
+selectCar(+store.get('car') || 0);
 
 function setCam(m) {
   camMode = m; store.set('cam', m);
