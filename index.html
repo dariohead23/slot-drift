@@ -75,6 +75,12 @@
     <h2>Auto</h2>
     <div id="carGrid"></div>
 
+    <h2>Sonido <kbd>M</kbd></h2>
+    <div class="seg"><button id="muteBtn">Silenciar</button></div>
+    <label class="hint" style="display:block;margin-top:8px">Volumen <span id="volVal" style="float:right"></span>
+      <input id="vol" type="range" min="0" max="1" step="0.05">
+    </label>
+
     <div id="ghostBox">
       <h2>Fantasma</h2>
       <div id="ghostList"></div>
@@ -370,6 +376,8 @@ const down = new Set();
 const typing = e => ['INPUT','TEXTAREA'].includes(e.target.tagName) && e.target.type !== 'range';
 addEventListener('keydown', e => {
   if (typing(e)) return;
+  initAudio();                                   // el navegador solo deja sonar después de un gesto del usuario
+  if (e.code==='KeyM' && !e.repeat) setMuted(!audio.muted);
   if (['ArrowUp','ArrowDown','Space','Enter'].includes(e.code)) e.preventDefault();
   down.add(e.code);
   if (e.code==='KeyR') resetRace();
@@ -381,6 +389,10 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => down.delete(e.code));
 addEventListener('blur', () => down.clear());
+addEventListener('pointerdown', () => initAudio());
+if (document.addEventListener) document.addEventListener('visibilitychange', () => {   // en otra pestaña no tiene que seguir sonando
+  if (audio.ctx) { if (document.hidden) audio.ctx.suspend(); else audio.ctx.resume(); }
+});
 const pressing = car => car.keys.some(k => down.has(k));
 
 function updateThrottle(car, dt) {
@@ -438,6 +450,7 @@ function stepCar(car, h) {
     car.lapStart = clock;
     if (mode !== 'libre' && !car.finished) {
       car.splits.push(clock - race.t0);
+      sfxLap(car.lap >= LAPS);
       if (car.lap >= LAPS) finishCar(car);
     }
   }
@@ -1022,6 +1035,161 @@ function drawCars(pred) {
   for (const car of activeCars()) { const q = carPose(car); if (pred(q.lv)) drawCar(q, car.sprite); }
 }
 
+// ---------- Sonido ----------
+// Todo se genera con Web Audio, sin archivos, y apunta a sonar a slot y no a motor de combustión:
+//  · motor: el zumbido agudo del colector (3 veces la frecuencia de giro del rotor), el chillido de los
+//    engranajes (~8,5 veces) y el chisporroteo de las escobillas; todo sube de tono con la velocidad.
+//    Al soltar el gatillo el rotor sigue girando y el tono baja solo, a medida que frena el coche.
+//  · plástico contra plástico: un chirrido áspero (ruido filtrado y un silbido) cuando patina
+//  · golpe y traqueteo cuando se sale, y un clic cuando el comisario lo vuelve a poner
+//  · semáforo como en los juegos de F1: cinco pitidos iguales y uno más largo y agudo al apagarse
+//  · campanita al cruzar la meta, y un zumbido grave si hay largada en falso
+//  · dentro de un túnel se apagan los agudos, como si lo oyeras desde afuera
+const audio = { ctx:null, master:null, car:null, tunnel:null, noise:null, V:null,
+  vol:0.8, muted:false, prevOff:false, prevFalse:false, prevPhase:'idle', lightsOn:0 };
+{ const v = store.get('vol'); if (v !== null) audio.vol = Math.min(1, Math.max(0, +v || 0)); audio.muted = store.get('mute') === '1'; }
+const MAX_V = 1143;     // velocidad punta aproximada (potencia / rozamiento)
+
+// ctxOverride solo lo usan las pruebas, para poder renderizar el sonido sin esperar un gesto del usuario
+function initAudio(ctxOverride) {
+  if (audio.ctx) { if (!ctxOverride && audio.ctx.state === 'suspended') audio.ctx.resume(); return; }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!ctxOverride && !AC) return;
+  const c = audio.ctx = ctxOverride || new AC();
+  const comp = c.createDynamicsCompressor();            // limitador suave: solo evita que se sature si se juntan varios sonidos fuertes
+  if (comp.threshold) { comp.threshold.value = -8; comp.knee.value = 10; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.15; }
+  audio.master = c.createGain(); audio.master.connect(comp); comp.connect(c.destination);
+  audio.tunnel = c.createBiquadFilter(); audio.tunnel.type = 'lowpass'; audio.tunnel.frequency.value = 18000; audio.tunnel.connect(audio.master);
+  audio.car = audio.tunnel;                              // por acá pasa todo lo que hace el coche
+  const n = Math.floor(c.sampleRate*2), buf = c.createBuffer(1, n, c.sampleRate), d = buf.getChannelData(0);
+  for (let i=0;i<n;i++) d[i] = Math.random()*2 - 1;
+  audio.noise = buf;
+  const osc = type => { const o = c.createOscillator(); o.type = type; o.start(); return o; };
+  const gain = v => { const g = c.createGain(); g.gain.value = v; return g; };
+  const filt = (type, f, q = 0.7) => { const b = c.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; };
+  const noiseSrc = () => { const src = c.createBufferSource(); src.buffer = audio.noise; src.loop = true; src.start(); return src; };
+  const chain = (...nodes) => { for (let i=0;i<nodes.length-1;i++) nodes[i].connect(nodes[i+1]); };
+  const V = audio.V = {}, out = gain(1); out.connect(audio.car);
+  // motor
+  V.rot  = osc('triangle');  V.gRot  = gain(0); chain(V.rot, V.gRot, out);
+  V.buzz = osc('sawtooth');  V.buzzLP = filt('lowpass', 2000); V.gBuzz = gain(0); chain(V.buzz, V.buzzLP, V.gBuzz, out);
+  V.gear = osc('sine');      V.gGear = gain(0); chain(V.gear, V.gGear, out);
+  V.brush = noiseSrc(); V.gBrush = gain(0); chain(V.brush, filt('bandpass', 3200, 0.8), V.gBrush, out);
+  V.lfo = osc('triangle');   V.lfoAmt = gain(0); chain(V.lfo, V.lfoAmt); V.lfoAmt.connect(V.gBrush.gain);   // el chisporroteo: el ruido de las escobillas tiembla
+  V.roll = noiseSrc();       V.gRoll = gain(0); chain(V.roll, filt('lowpass', 320), V.gRoll, out);          // las ruedas rodando sobre la pista
+  // chirrido
+  V.skid = noiseSrc();       V.skidBP = filt('bandpass', 1800, 4); V.gSkid = gain(0); chain(V.skid, V.skidBP, V.gSkid, out);
+  V.tone = osc('triangle');  V.gTone = gain(0); chain(V.tone, V.gTone, out);
+  V.vib = osc('sine'); V.vib.frequency.value = 9; V.vibAmt = gain(35); chain(V.vib, V.vibAmt); V.vibAmt.connect(V.tone.frequency);
+  applyVolume();
+}
+
+function applyVolume() {
+  if (!audio.master) return;
+  audio.master.gain.setTargetAtTime(audio.muted ? 0 : audio.vol*audio.vol, audio.ctx.currentTime, 0.02);
+}
+
+// Se llama en cada cuadro: acomoda el tono y el volumen de cada voz según el estado del coche.
+function updateAudio() {
+  const c = audio.ctx; if (!c || !audio.V) return;
+  const V = audio.V, t = c.currentTime;
+  const set = (p, v, tau = 0.04) => { if (Number.isFinite(v)) p.setTargetAtTime(v, t, tau); };
+  const car = player, off = !!car.off;
+  const v = off ? 0 : car.v, sp = Math.min(1, v/MAX_V), thr = car.thr;
+  const run = !off && (v > 1.5 || thr > 0.03);
+  // motor
+  const A = run ? 0.25 + 0.55*sp + 0.20*thr : 0;
+  const fr = 38 + 300*Math.pow(sp, 0.85);                 // giro del rotor (Hz)
+  set(V.rot.frequency, fr); set(V.buzz.frequency, fr*3); set(V.gear.frequency, fr*8.5);
+  set(V.gRot.gain, 0.10*A); set(V.gBuzz.gain, 0.16*A); set(V.gGear.gain, 0.03*A*(0.4 + sp));
+  set(V.buzzLP.frequency, 700 + 3200*sp);
+  const br = run ? 0.14*(0.35 + 0.65*sp)*(0.25 + 0.75*thr) : 0;
+  set(V.gBrush.gain, br); set(V.lfoAmt.gain, br*0.9); set(V.lfo.frequency, 35 + 40*sp);
+  set(V.gRoll.gain, run ? 0.16*sp : 0);
+  // chirrido (patina) y raspado (se salió y va arrastrándose)
+  const dd = Math.abs(car.drift || 0)*180/Math.PI;
+  const slide = !off && car.sliding && v > 80 ? Math.min(1, 0.3 + dd/35)*Math.min(1, v/450) : 0;
+  const scrape = off ? Math.min(1, Math.hypot(car.off.vx, car.off.vy)/500)*0.6 : 0;
+  set(V.gSkid.gain, 0.45*Math.max(slide, scrape)); set(V.gTone.gain, 0.06*slide);
+  set(V.skidBP.frequency, 1500 + 1500*sp); set(V.tone.frequency, 1100 + 1400*sp + 300*slide, 0.08);
+  // túnel
+  set(audio.tunnel.frequency, !off && carPose(car).lv < 0 ? 700 : 18000, 0.05);
+  // eventos puntuales
+  if (off && !audio.prevOff) sfxCrash(Math.hypot(car.off.vx, car.off.vy));
+  if (!off && audio.prevOff) sfxClack(c.currentTime, 0.5);
+  audio.prevOff = off;
+  if (car.falseStart && !audio.prevFalse) sfxBuzzer();
+  audio.prevFalse = car.falseStart;
+  // semáforo: un pitido por cada luz que se enciende y uno largo y más agudo al apagarse
+  if (race.phase === 'lights') {
+    const on = Math.min(5, Math.floor((clock - race.lightsStart)/0.8));
+    while (audio.lightsOn < on) { audio.lightsOn++; beep(1000, 0.2, 0.2); }
+  } else {
+    if (audio.prevPhase === 'lights' && race.phase === 'running') beep(1500, 0.6, 0.22);
+    audio.lightsOn = 0;
+  }
+  audio.prevPhase = race.phase;
+}
+
+// Pitido electrónico: cuadrada filtrada, con ataque y cierre rápidos para que no haga clic.
+function beep(freq, dur, vol, when = 0) {
+  const c = audio.ctx; if (!c || !audio.master) return;
+  const t = c.currentTime + when, o = c.createOscillator(), f = c.createBiquadFilter(), g = c.createGain();
+  o.type = 'square'; o.frequency.value = freq; f.type = 'lowpass'; f.frequency.value = freq*4;
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.004);
+  g.gain.setValueAtTime(vol, t + dur - 0.02); g.gain.linearRampToValueAtTime(0.0001, t + dur);
+  o.connect(f); f.connect(g); g.connect(audio.master); o.start(t); o.stop(t + dur + 0.02);
+}
+
+// Zumbido grave de largada en falso.
+function sfxBuzzer() {
+  const c = audio.ctx; if (!c || !audio.master) return;
+  const t = c.currentTime, o = c.createOscillator(), g = c.createGain(), trem = c.createOscillator(), tg = c.createGain();
+  o.type = 'sawtooth'; o.frequency.value = 140;
+  trem.frequency.value = 18; tg.gain.value = 0.05; trem.connect(tg); tg.connect(g.gain);   // un temblor que lo hace sonar a chicharra
+  g.gain.setValueAtTime(0.12, t); g.gain.setValueAtTime(0.12, t + 0.4); g.gain.linearRampToValueAtTime(0.0001, t + 0.5);
+  o.connect(g); g.connect(audio.master); o.start(t); trem.start(t); o.stop(t + 0.55); trem.stop(t + 0.55);
+}
+
+// Campanita: dos senoidas con decaimiento. Al terminar la carrera suena un arpegio.
+function ding(f, when, vol) {
+  const c = audio.ctx, t = c.currentTime + when, g = c.createGain();
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45); g.connect(audio.master);
+  for (const k of [1, 2.01]) { const o = c.createOscillator(); o.frequency.value = f*k; o.connect(g); o.start(t); o.stop(t + 0.5); }
+}
+function sfxLap(final) {
+  if (!audio.ctx || !audio.master) return;
+  ding(1318, 0, 0.2);
+  if (final) { ding(1760, 0.13, 0.2); ding(2093, 0.26, 0.2); }
+}
+
+// Un clac de plástico: ráfaga corta de ruido filtrado.
+function sfxClack(t, a) {
+  const c = audio.ctx; if (!c || !audio.car) return;
+  const s = c.createBufferSource(), bp = c.createBiquadFilter(), g = c.createGain();
+  s.buffer = audio.noise; bp.type = 'bandpass'; bp.frequency.value = 900 + Math.random()*2600; bp.Q.value = 2.5;
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(1.2*a, t + 0.002); g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+  s.connect(bp); bp.connect(g); g.connect(audio.car); s.start(t, Math.random()*1.5); s.stop(t + 0.07);
+}
+
+// Se sale de la pista: un golpe grave y el traqueteo del plástico, cada vez más espaciado.
+function sfxCrash(speed) {
+  const c = audio.ctx; if (!c || !audio.car) return;
+  const t = c.currentTime, a = Math.min(1, 0.25 + speed/900), o = c.createOscillator(), g = c.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(170, t); o.frequency.exponentialRampToValueAtTime(48, t + 0.18);
+  g.gain.setValueAtTime(0.6*a, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  o.connect(g); g.connect(audio.car); o.start(t); o.stop(t + 0.25);
+  let tt = t;
+  for (let i=0;i<6;i++) { sfxClack(tt, a*(1 - i*0.13)); tt += 0.03 + i*0.045 + Math.random()*0.03; }
+}
+
+function setMuted(m) {
+  audio.muted = !!m; store.set('mute', audio.muted ? '1' : '0');
+  $('muteBtn').textContent = audio.muted ? 'Activar sonido' : 'Silenciar';
+  $('muteBtn').classList.toggle('on', audio.muted);
+  applyVolume();
+}
+
 // ---------- Bucle ----------
 // Paso de simulación fijo: la física avanza siempre de a 1/600 s, sin importar
 // los FPS. Así una vuelta da el mismo resultado en cualquier máquina.
@@ -1030,6 +1198,7 @@ let lastT = performance.now(), accum = 0;
 function frame(now) {
   const dtr = Math.min(0.1, (now-lastT)/1000); accum += dtr; lastT = now;
   while (accum >= H) { accum -= H; simStep(); }
+  updateAudio();
   for (const car of activeCars()) addSkid(car);
 
   ctx.setTransform(1,0,0,1,0,0);
@@ -1160,6 +1329,12 @@ CARS.forEach((c, i) => {
   $('carGrid').appendChild(b);
 });
 selectCar(+store.get('car') || 0);
+
+$('muteBtn').onclick = e => { setMuted(!audio.muted); e.target.blur(); };
+$('vol').value = audio.vol; $('volVal').textContent = Math.round(audio.vol*100) + '%';
+$('vol').addEventListener('input', () => { audio.vol = +$('vol').value; $('volVal').textContent = Math.round(audio.vol*100) + '%'; store.set('vol', audio.vol); applyVolume(); });
+$('vol').addEventListener('keydown', e => e.preventDefault());
+setMuted(audio.muted);
 
 function setCam(m) {
   camMode = m; store.set('cam', m);
