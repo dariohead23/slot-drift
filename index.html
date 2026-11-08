@@ -805,7 +805,7 @@ function drawGround() {
     const p = T.center[Math.min(T.center.length-1, 46)], cur = Math.min(player.lap + 1, LAPS);
     ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(Math.cos(p.th) < 0 ? p.th + Math.PI : p.th);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = '700 32px system-ui'; ctx.fillStyle = cur === LAPS ? 'rgba(255,200,60,.8)' : 'rgba(255,255,255,.6)';
+    ctx.font = '500 32px system-ui'; ctx.fillStyle = cur === LAPS ? 'rgba(255,200,60,.8)' : 'rgba(255,255,255,.6)';
     ctx.fillText(`${cur}/${LAPS}`, 0, 0);
     ctx.restore();
   }
