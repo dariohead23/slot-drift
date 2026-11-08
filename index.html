@@ -723,13 +723,16 @@ let world = { minx:0, maxx:1, miny:0, maxy:1 };
 function resize() {
   const r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
   cv.width = r.width*dpr; cv.height = r.height*dpr;
-  const xs = [...T.cx], ys = [...T.cy], m = LANE+60;
+  const m = LANE+60;
+  let minx = Math.min(...T.cx)-m, maxx = Math.max(...T.cx)+m, miny = Math.min(...T.cy)-m, maxy = Math.max(...T.cy)+m;
+  const cyc = (miny + maxy)/2;   // centro vertical de la pista sola
   { const c = T.counter, ca = Math.cos(c.a), sa = Math.sin(c.a);   // la caja del contador también tiene que entrar en pantalla
     for (const [dx, dy] of [[-1,-1],[1,-1],[1,1],[-1,1]]) {
-      const lx = dx*(COUNTER.w/2 + 20), ly = dy*(COUNTER.h/2 + 20);
-      xs.push(c.x + lx*ca - ly*sa + 0); ys.push(c.y + lx*sa + ly*ca);
+      const lx = dx*(COUNTER.w/2 + 20), ly = dy*(COUNTER.h/2 + 20), px = c.x + lx*ca - ly*sa, py = c.y + lx*sa + ly*ca;
+      minx = Math.min(minx, px); maxx = Math.max(maxx, px); miny = Math.min(miny, py); maxy = Math.max(maxy, py);
     } }
-  world = { minx:Math.min(...xs)-m, maxx:Math.max(...xs)+m, miny:Math.min(...ys)-m, maxy:Math.max(...ys)+m };
+  const half = Math.max(cyc - miny, maxy - cyc);   // verticalmente simétrico: la pista queda centrada aunque la caja sobresalga de un lado
+  world = { minx, maxx, miny:cyc - half, maxy:cyc + half };
   // fit = escala (px CSS por unidad de mundo) con la que entra la pista completa
   const fit = Math.min(r.width/(world.maxx-world.minx), (r.height-HUD_H)/(world.maxy-world.miny));
   view = { ...view, fit, dpr, w:r.width, h:r.height };
