@@ -343,20 +343,19 @@ function buildTrack(def0) {
            raceDist: lapLen*LAPS, th0: def.th0 || 0,
            cx: center.map(p=>p.x), cy: center.map(p=>p.y), lvC: center.map(p=>p.lv), hC: center.map(p=>p.h), counter: computeCounter(center) };
 }
-// Contador de vueltas, al costado de la línea de largada (como los viejos Scalextric). Busca de qué
-// lado de la recta hay lugar: prefiere el lado de adentro del circuito, siempre que no choque con otro
-// tramo de pista.
-const COUNTER = { w:95, h:55, off:78 };   // medidas de la caja y distancia de su centro al eje de la pista
+// Contador de vueltas, pegado al borde de la pista junto a la línea de largada (como los viejos
+// Scalextric). Va del lado de arriba de la pantalla, salvo que ahí no haya lugar (otro tramo de pista).
+// off = semiancho de la pista (42) + media caja (27.5) - 1: apoyado en el borde, como una pieza más.
+const COUNTER = { w:95, h:55, off:68.5 };
 function computeCounter(center) {
   const p0 = center[0], n = center.length, nx = -Math.sin(p0.th), ny = Math.cos(p0.th);
-  const mx = center.reduce((t, p) => t + p.x, 0)/n, my = center.reduce((t, p) => t + p.y, 0)/n;
   const cands = [1, -1].map(side => {
     const x = p0.x + nx*side*COUNTER.off, y = p0.y + ny*side*COUNTER.off;
     let free = Infinity;
     for (let i=200;i<n-200;i++) free = Math.min(free, Math.hypot(center[i].x - x, center[i].y - y));
-    return { x, y, free, ok: free >= COUNTER.off + 30, toMid: Math.hypot(mx - x, my - y) };
+    return { x, y, free, ok: free >= COUNTER.off + 3 };
   });
-  const pick = cands.filter(c => c.ok).sort((a, b) => a.toMid - b.toMid)[0] || cands.sort((a, b) => b.free - a.free)[0];
+  const pick = cands.filter(c => c.ok).sort((a, b) => a.y - b.y)[0] || cands.sort((a, b) => b.free - a.free)[0];
   return { x:pick.x, y:pick.y, a: Math.cos(p0.th) < 0 ? p0.th + Math.PI : p0.th };   // de pie: nunca cabeza abajo
 }
 
