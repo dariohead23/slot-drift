@@ -21,6 +21,9 @@
   .seg { display:flex; gap:4px; }
   .seg button { flex:1; padding:7px 4px; }
   .seg button.on { background:#3a4250; border-color:#7a8597; }
+  #soundSel { margin-bottom:10px; }
+  #soundSel svg { width:22px; height:22px; display:block; margin:0 auto; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  #soundSel .spk { fill:currentColor; stroke-width:1.2; }
   .btns { display:flex; gap:4px; flex-wrap:wrap; margin-top:8px; }
   .btns button { flex:1; }
   .radio { display:flex; gap:8px; align-items:center; margin:5px 0; font-size:13px; cursor:pointer; }
@@ -64,10 +67,7 @@
     <div id="carGrid"></div>
 
     <h2>Sonido <kbd>M</kbd></h2>
-    <div class="seg"><button id="muteBtn">Silenciar</button></div>
-    <label class="hint" style="display:block;margin-top:8px">Volumen <span id="volVal" style="float:right"></span>
-      <input id="vol" type="range" min="0" max="1" step="0.05">
-    </label>
+    <div class="seg" id="soundSel"></div>
 
     <div id="ghostBox">
       <h2>Fantasma</h2>
@@ -398,7 +398,7 @@ const typing = e => ['INPUT','TEXTAREA'].includes(e.target.tagName) && e.target.
 addEventListener('keydown', e => {
   if (typing(e)) return;
   initAudio();                                   // el navegador solo deja sonar después de un gesto del usuario
-  if (e.code==='KeyM' && !e.repeat) setMuted(!audio.muted);
+  if (e.code==='KeyM' && !e.repeat) setSound((audio.level + 1) % SOUND_LEVELS.length);
   if (['ArrowUp','ArrowDown','Space','Enter'].includes(e.code)) e.preventDefault();
   down.add(e.code);
   if (e.code==='KeyR') resetRace();
@@ -1110,8 +1110,10 @@ function drawCars(pred) {
 //  · campanita al cruzar la meta, y un zumbido grave si hay largada en falso
 //  · dentro de un túnel se apagan los agudos, como si lo oyeras desde afuera
 const audio = { ctx:null, master:null, car:null, tunnel:null, noise:null, V:null,
-  vol:0.8, muted:false, prevOff:false, prevFalse:false, prevPhase:'idle', lightsOn:0 };
-{ const v = store.get('vol'); if (v !== null) audio.vol = Math.min(1, Math.max(0, +v || 0)); audio.muted = store.get('mute') === '1'; }
+  level:3, prevOff:false, prevFalse:false, prevPhase:'idle', lightsOn:0 };
+// Cuatro niveles de sonido: mudo, bajito, medio y alto (ganancia general de cada uno). La M los recorre.
+const SOUND_LEVELS = [ { name:'Mudo', gain:0 }, { name:'Bajo', gain:0.1 }, { name:'Medio', gain:0.32 }, { name:'Alto', gain:0.7 } ];
+{ const v = store.get('sound'); if (v !== null && SOUND_LEVELS[+v]) audio.level = +v; }
 const MAX_V = 1143;     // velocidad punta aproximada (potencia / rozamiento)
 
 // ctxOverride solo lo usan las pruebas, para poder renderizar el sonido sin esperar un gesto del usuario
@@ -1150,7 +1152,7 @@ function initAudio(ctxOverride) {
 
 function applyVolume() {
   if (!audio.master) return;
-  audio.master.gain.setTargetAtTime(audio.muted ? 0 : audio.vol*audio.vol, audio.ctx.currentTime, 0.02);
+  audio.master.gain.setTargetAtTime(SOUND_LEVELS[audio.level].gain, audio.ctx.currentTime, 0.02);
 }
 
 // Se llama en cada cuadro: acomoda el tono y el volumen de cada voz según el estado del coche.
@@ -1250,10 +1252,9 @@ function sfxCrash(speed) {
   for (let i=0;i<6;i++) { sfxClack(tt, a*(1 - i*0.13)); tt += 0.03 + i*0.045 + Math.random()*0.03; }
 }
 
-function setMuted(m) {
-  audio.muted = !!m; store.set('mute', audio.muted ? '1' : '0');
-  $('muteBtn').textContent = audio.muted ? 'Activar sonido' : 'Silenciar';
-  $('muteBtn').classList.toggle('on', audio.muted);
+function setSound(level) {
+  audio.level = level; store.set('sound', level);
+  document.querySelectorAll('#soundSel button').forEach((b, k) => b.classList.toggle('on', k === level));
   applyVolume();
 }
 
@@ -1429,11 +1430,21 @@ CARS.forEach((c, i) => {
 });
 selectCar(+store.get('car') || 0);
 
-$('muteBtn').onclick = e => { setMuted(!audio.muted); e.target.blur(); };
-$('vol').value = audio.vol; $('volVal').textContent = Math.round(audio.vol*100) + '%';
-$('vol').addEventListener('input', () => { audio.vol = +$('vol').value; $('volVal').textContent = Math.round(audio.vol*100) + '%'; store.set('vol', audio.vol); applyVolume(); });
-$('vol').addEventListener('keydown', e => e.preventDefault());
-setMuted(audio.muted);
+// Selector de sonido: un parlante con 0 (mudo, tachado), 1, 2 o 3 ondas
+const SPEAKER = '<path class="spk" d="M3 9.5v5h3.5l4.5 3.8V5.7L6.5 9.5H3z"/>';
+const SOUND_ICONS = [
+  '<path d="M15.5 9.5l5 5M20.5 9.5l-5 5"/>',
+  '<path d="M15 9.5a3.5 3.5 0 0 1 0 5"/>',
+  '<path d="M15 9.5a3.5 3.5 0 0 1 0 5M17.5 7a7 7 0 0 1 0 10"/>',
+  '<path d="M15 9.5a3.5 3.5 0 0 1 0 5M17.5 7a7 7 0 0 1 0 10M20 4.5a10.5 10.5 0 0 1 0 15"/>',
+];
+SOUND_LEVELS.forEach((lv, i) => {
+  const b = document.createElement('button');
+  b.title = lv.name; b.innerHTML = `<svg viewBox="0 0 24 24">${SPEAKER}${SOUND_ICONS[i]}</svg>`;
+  b.onclick = () => { setSound(i); b.blur(); };
+  $('soundSel').appendChild(b);
+});
+setSound(audio.level);
 
 // ?pista=<id> permite abrir el juego directo en una pista (para compartir o probar)
 const qs = new URLSearchParams(location.search);
