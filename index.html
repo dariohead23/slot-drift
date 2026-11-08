@@ -345,18 +345,20 @@ function buildTrack(def0) {
 }
 // Contador de vueltas, pegado al borde de la pista junto a la línea de largada (como los viejos
 // Scalextric). Va del lado de arriba de la pantalla, salvo que ahí no haya lugar (otro tramo de pista).
-// off = semiancho de la pista (42) + media caja (27.5) - 1: apoyado en el borde, como una pieza más.
-const COUNTER = { w:95, h:55, off:68.5 };
+// off = semiancho de la pista (42) + media caja (23.5) - 1: apoyado en el borde, como una pieza más.
+const COUNTER = { w:81, h:47, off:64.5 };
 function computeCounter(center) {
   const p0 = center[0], n = center.length, nx = -Math.sin(p0.th), ny = Math.cos(p0.th);
   const cands = [1, -1].map(side => {
     const x = p0.x + nx*side*COUNTER.off, y = p0.y + ny*side*COUNTER.off;
     let free = Infinity;
     for (let i=200;i<n-200;i++) free = Math.min(free, Math.hypot(center[i].x - x, center[i].y - y));
-    return { x, y, free, ok: free >= COUNTER.off + 3 };
+    return { x, y, side, free, ok: free >= COUNTER.off + 3 };
   });
   const pick = cands.filter(c => c.ok).sort((a, b) => a.y - b.y)[0] || cands.sort((a, b) => b.free - a.free)[0];
-  return { x:pick.x, y:pick.y, a: Math.cos(p0.th) < 0 ? p0.th + Math.PI : p0.th };   // de pie: nunca cabeza abajo
+  const flip = Math.cos(p0.th) < 0;   // de pie: nunca cabeza abajo
+  // roadDir: hacia qué lado del eje y local de la caja queda la pista (+1 abajo, -1 arriba)
+  return { x:pick.x, y:pick.y, a: flip ? p0.th + Math.PI : p0.th, roadDir: flip ? pick.side : -pick.side };
 }
 
 const builtTracks = {};
@@ -840,9 +842,14 @@ function drawLapCounter() {
   if (mode !== 'crono') return;
   const c = T.counter, cur = Math.min(player.lap + 1, LAPS), w = 76, h = 44;   // se dibuja a 76×44 y se escala a COUNTER
   ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.a); ctx.scale(COUNTER.w/w, COUNTER.w/w);
-  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.roundRect(-w/2 + 3, -h/2 + 4, w, h, 7); ctx.fill();   // sombra
-  ctx.fillStyle = '#26282d'; ctx.strokeStyle = '#555a63'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.roundRect(-w/2, -h/2, w, h, 7); ctx.fill(); ctx.stroke();
+  // El lado que da a la pista es recto (sin esquinas redondeadas ni borde) para que la caja se una al tramo.
+  const rd = c.roadDir, R = 7, corners = rd > 0 ? [R, R, 0, 0] : [0, 0, R, R];
+  ctx.fillStyle = '#26282d'; ctx.beginPath(); ctx.roundRect(-w/2, -h/2, w, h, corners); ctx.fill();
+  ctx.save(); ctx.scale(1, rd);   // espejado vertical solo para el borde: así la pista siempre queda abajo
+  ctx.strokeStyle = '#555a63'; ctx.lineWidth = 1.5; ctx.beginPath();
+  ctx.moveTo(-w/2, h/2); ctx.lineTo(-w/2, -h/2 + R); ctx.arcTo(-w/2, -h/2, -w/2 + R, -h/2, R);
+  ctx.lineTo(w/2 - R, -h/2); ctx.arcTo(w/2, -h/2, w/2, -h/2 + R, R); ctx.lineTo(w/2, h/2); ctx.stroke();
+  ctx.restore();
   ctx.fillStyle = '#080404'; ctx.beginPath(); ctx.roundRect(-w/2 + 5, -h/2 + 5, w - 10, h - 10, 4); ctx.fill();
   const xs = [-17, 17];
   ctx.fillStyle = '#240a08';                                             // segmentos apagados
