@@ -145,6 +145,7 @@ const GHOST_HZ = 30;   // muestras por segundo del fantasma
 // Sin swap (un 8, por ejemplo, cuyo giro neto es 0) los dos carriles miden exactamente lo
 // mismo, así que cada uno es un circuito de una vuelta y no hace falta cambiarlos.
 const SCALE = 1.5;
+const BRIDGE_RAMP = 90;   // largo (unidades) de cada rampa de puente
 const LZ = 0.8;     // escala de El Lazo: más chico para que entre en pantalla
 const EIGHT = { R:170, M:240, D:339.705627 };   // D se resolvió para que el 8 cierre exacto
 const TRACKS = [
@@ -257,6 +258,18 @@ function buildCenter(def) {
     mark(i, tunnelFirst ? c.tunnelHalf : c.bridgeHalf, tunnelFirst ? -1 : 1);
     mark(j, tunnelFirst ? c.bridgeHalf : c.tunnelHalf, tunnelFirst ? 1 : -1);
   }
+  // Rampas de los puentes: a cada lado del tramo plano la calzada sube de a poco (smoothstep) desde
+  // el suelo, así el puente no aparece de golpe. h = altura de 0 a 1; los puntos de rampa también
+  // cuentan como nivel de puente (lv = 1) para el orden de dibujo.
+  const N = pts.length, up = [];
+  pts.forEach(p => p.h = p.lv > 0 ? 1 : 0);
+  for (let i=0;i<N;i++) if (pts[i].lv > 0 && pts[(i-1+N)%N].lv <= 0) up.push(i, 1);       // principio de un tramo plano
+  for (let i=0;i<N;i++) if (pts[i].lv > 0 && pts[(i+1)%N].lv <= 0) up.push(i, -1);        // final de un tramo plano
+  for (let q=0;q<up.length;q+=2) for (let k=1;k<BRIDGE_RAMP;k++) {
+    const j = (up[q] - up[q+1]*k + N*2) % N, t = 1 - k/BRIDGE_RAMP, h = t*t*(3-2*t);
+    if (pts[j].lv < 0) break;                       // no se pisa un túnel
+    if (h > pts[j].h) { pts[j].h = h; pts[j].lv = 1; }
+  }
   return { center: pts, pieceStart };
 }
 
@@ -312,7 +325,7 @@ function buildTrack(def0) {
   }
   return { id:def.id, name:def.name, def, center, pieceStart, routes, starts, mid, lapLen,
            raceDist: lapLen*LAPS, th0: def.th0 || 0,
-           cx: center.map(p=>p.x), cy: center.map(p=>p.y), lvC: center.map(p=>p.lv) };
+           cx: center.map(p=>p.x), cy: center.map(p=>p.y), lvC: center.map(p=>p.lv), hC: center.map(p=>p.h) };
 }
 const builtTracks = {};
 const getTrack = id => builtTracks[id] || (builtTracks[id] = buildTrack(TRACKS.find(t => t.id === id)));
@@ -726,20 +739,21 @@ function drawSlots(rt, pred) {
 // Capa de suelo: pianos, asfalto, ranuras y línea de salida (los tramos de puente y de túnel
 // no se dibujan acá: van en sus propias capas).
 function drawGround() {
-  const { center, cx, cy, lvC } = T, n = center.length;
+  const { center, cx, cy, hC } = T, n = center.length;
   ctx.lineJoin = 'round'; ctx.lineCap = 'butt';
+  // (bajo las rampas de los puentes también hay suelo: el puente se apoya encima, sin cortes)
   // pianos en curvas (de a trozos de 14 puntos, que alternan de color)
   ctx.lineWidth = LANE*2 + 52;
   for (let c0=0; c0<n; c0+=14) {
     ctx.beginPath(); let any = false;
-    for (let i=c0; i<Math.min(c0+14, n); i++) if (center[i].arc && center[i].lv === 0) {
+    for (let i=c0; i<Math.min(c0+14, n); i++) if (center[i].arc && hC[i] < 1) {
       ctx.moveTo(cx[i], cy[i]); ctx.lineTo(cx[(i+1)%n], cy[(i+1)%n]); any = true;
     }
     if (any) { ctx.strokeStyle = (c0/14 % 2) ? '#d33' : '#eee'; ctx.stroke(); }
   }
   // asfalto
   ctx.strokeStyle = '#3a3d44'; ctx.lineWidth = ROAD_W;
-  runsOf(lvC, v => v === 0, (a, b) => { ctx.beginPath(); tracePath(cx, cy, a, b); ctx.stroke(); });
+  runsOf(hC, v => v < 1, (a, b) => { ctx.beginPath(); tracePath(cx, cy, a, b); ctx.stroke(); });
   // ranuras
   for (const rt of new Set(T.routes)) drawSlots(rt, v => v === 0);
   // línea de salida a cuadros (perpendicular al rumbo inicial)
@@ -774,18 +788,29 @@ function drawTunnels() {
   });
 }
 
-// Puentes: sombra sobre el suelo, barandas, calzada y ranuras. Van encima de todo lo demás.
+// Banda de ancho variable alrededor de la línea central entre los puntos a..b (más el siguiente):
+// half(i) es el semiancho y shift(i) el desplazamiento [dx, dy] en cada punto. Se rellena de una vez,
+// así una sombra translúcida no se oscurece donde se solaparían tramos.
+function fillStrip(a, b, half, shift, style) {
+  const { cx, cy, center } = T, n = center.length, L = [], R = [];
+  for (let i=a;i<=b+1;i++) {
+    const j = i % n, nx = -Math.sin(center[j].th), ny = Math.cos(center[j].th), w = half(j), [dx, dy] = shift(j);
+    L.push(cx[j] + nx*w + dx, cy[j] + ny*w + dy); R.push(cx[j] - nx*w + dx, cy[j] - ny*w + dy);
+  }
+  ctx.beginPath(); ctx.moveTo(L[0], L[1]);
+  for (let i=2;i<L.length;i+=2) ctx.lineTo(L[i], L[i+1]);
+  for (let i=R.length-2;i>=0;i-=2) ctx.lineTo(R[i], R[i+1]);
+  ctx.closePath(); ctx.fillStyle = style; ctx.fill();
+}
+
+// Puentes: sombra sobre el suelo, barandas, calzada y ranuras. Van encima de todo lo demás. La altura
+// (T.hC) crece en las rampas: la sombra se aleja y las barandas aparecen de a poco, sin escalón.
 function drawBridges() {
-  const { cx, cy, lvC } = T;
-  ctx.lineJoin = 'round'; ctx.lineCap = 'butt';
+  const { hC, lvC } = T, none = () => [0, 0];
   runsOf(lvC, v => v > 0, (a, b) => {
-    ctx.save(); ctx.translate(7, 10);
-    ctx.beginPath(); tracePath(cx, cy, a, b);
-    ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = ROAD_W + 14; ctx.stroke();
-    ctx.restore();
-    ctx.beginPath(); tracePath(cx, cy, a, b);
-    ctx.strokeStyle = '#bcc0c7'; ctx.lineWidth = ROAD_W + 14; ctx.stroke();
-    ctx.strokeStyle = '#3a3d44'; ctx.lineWidth = ROAD_W; ctx.stroke();
+    fillStrip(a, b, i => ROAD_W/2 + 7*hC[i], i => [7*hC[i], 10*hC[i]], 'rgba(0,0,0,.35)');
+    fillStrip(a, b, i => ROAD_W/2 + 7*hC[i], none, '#bcc0c7');
+    fillStrip(a, b, () => ROAD_W/2, none, '#3a3d44');
   });
   for (const rt of new Set(T.routes)) drawSlots(rt, v => v > 0);
 }
