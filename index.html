@@ -961,11 +961,11 @@ function box(cx, cy, bw, bh) {
 function drawRaceOverlay(w, hgt) {
   const cx = w/2, cy = HUD_H + (hgt-HUD_H)/2;
   ctx.textAlign = 'center';
-  if (race.phase === 'idle') {
-    box(cx, cy, 300, 70);
-    ctx.fillStyle = '#e8e8e8'; ctx.font = '600 18px system-ui'; ctx.fillText('Enter para largar', cx, cy-4);
-    ctx.fillStyle = '#8a8f98'; ctx.font = '12px system-ui';
-    ctx.fillText(`${LAPS} vueltas · no aceleres antes de que se apaguen las luces`, cx, cy+20);
+  if (race.phase === 'idle') {   // el cartel ocupa el lugar del semáforo
+    box(cx, 43, 254, 70);
+    ctx.fillStyle = '#e8e8e8'; ctx.font = '600 17px system-ui'; ctx.fillText('Enter para largar', cx, 38);
+    ctx.fillStyle = '#8a8f98'; ctx.font = '11px system-ui';
+    ctx.fillText(`${LAPS} vueltas · no aceleres antes de tiempo`, cx, 60);
   }
   // Semáforo arriba y al centro. Con las luces verdes espera tu reacción y la muestra ahí mismo; a los
   // pocos segundos desaparece. Si hubo largada en falso, muestra el tiempo de freno que queda.
