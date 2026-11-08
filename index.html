@@ -150,6 +150,7 @@ const GHOST_HZ = 30;   // muestras por segundo del fantasma
 // mismo, así que cada uno es un circuito de una vuelta y no hace falta cambiarlos.
 const SCALE = 1.5;
 const BRIDGE_RAMP = 90;   // largo (unidades) de cada rampa de puente
+const LG = 1.4;     // escala de la pista Largo (boceto long.jpeg)
 const LZ = 0.8;     // escala de El Lazo: más chico para que entre en pantalla
 const EIGHT = { R:170, M:240, D:339.705627 };   // D se resolvió para que el 8 cierre exacto
 const TRACKS = [
@@ -183,17 +184,19 @@ const TRACKS = [
       .map(p => p[0]==='S' ? ['S', p[1]*LZ] : ['A', p[1], p[2]*LZ]),
     swap: { piece:2, len:200 },        // cruce de carriles en la recta corta donde largaba antes
     cross: { under:'second', tunnelHalf:70, bridgeHalf:95 } },   // el aro (primera pasada) por el puente; la cola, por el túnel
-  // Pista inventada: escalera. Recta de largada, una curva a la derecha y un "escalón" hacia la derecha hecho como
-  // una diagonal: curvas cortas de 22,5° intercaladas con rectas cortas (como las piezas de un Scalextric), una
-  // curva cerrada hacia la vuelta y una larga recta con una S suave antes de subir por la izquierda.
-  // Giro neto de 360° (horario): hace falta cruce de carriles. Sin cruces de pista ni puentes.
-  { id:'escalera-2', name:'Escalera · escalón y S',
-    startAt: 213,
-    close: [10, 13],                   // la recta larga de abajo y la subida de la izquierda: las calcula closePieces
-    pieces: [['S',640],['A',90,130],
-             ['A',-22.5,130],['S',25],['A',-22.5,130],['S',220],['A',22.5,130],['S',25],['A',22.5,130],   // el escalón en diagonal
-             ['A',90,130],['S',0],['SS',260,70],['A',90,130],['S',0],['A',90,130]],
-    swap: { piece:10, len:260 },       // cruce de carriles en la recta larga de abajo
+  // Boceto del usuario (long.jpeg), a escala LG (1 px del dibujo = LG unidades) y girado 90° para que quede
+  // acostada. Va en sentido horario: recta de largada (la recta larga de la izquierda del dibujo), arco grande,
+  // bajada, giro en U hacia atrás, un escalón en diagonal (curvas de 35° con una recta en el medio), segundo arco,
+  // recta larga, curva a la diagonal, y vuelta por la recta de abajo y una curva cerrada. Giro neto de 360°:
+  // hace falta cruce de carriles. Sin cruces de pista ni puentes.
+  { id:'largo-1', name:'Largo · arcos y diagonal',
+    startAt: 250,                      // la largada, adentro de la recta larga (764)
+    close: [10, 14],                   // la recta larga del lado derecho del dibujo y la recta de abajo: las calcula closePieces
+    th0: 0,                            // el dibujo apunta hacia arriba; girado 90° apunta hacia la derecha
+    pieces: [['S',546],['A',180,91],['S',344],['A',-180,86],['S',95],['A',-35,80],['S',106],['A',35,80],['S',80],['A',180,95],
+             ['S',0],['A',54,110],['S',106],['A',36,107],['S',0],['A',90,105]]
+      .map(p => p[0]==='S' ? ['S', p[1]*LG] : ['A', p[1], p[2]*LG]),
+    swap: { piece:10, len:260 },       // cruce de carriles en la recta larga del lado derecho del dibujo
     structures: [] },
 ];
 const DEFAULT_TRACK = TRACKS[0].id;
