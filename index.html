@@ -129,7 +129,8 @@ const DAMP = 4;        // amortiguación del giro del chasis
 const SCRUB = 2.0;     // pérdida de velocidad al ir cruzado
 const LANE = 22;       // separación del carril respecto al centro
 const LAPS = 4;        // vueltas por carrera (par: con el cruce de carriles, 2 vueltas = mismo recorrido)
-const PENALTY = 1;     // segundos por largada en falso
+const PENALTY = 1;     // segundos de freno casi total tras largar, si hubo largada en falso
+const PENALTY_V = 25;  // velocidad máxima (unidades/s) durante esa penalización: el coche apenas se arrastra
 const GHOST_HZ = 30;   // muestras por segundo del fantasma
 
 // ---------- Pistas ----------
@@ -358,7 +359,7 @@ const activeCars = () => cars.filter(c => c.active);
 function resetCar(c) {
   Object.assign(c, { s:c.start, v:0, b:geoAngle(laneAt(rtOf(c), c.start).k), bd:0, thr:0, drift:0, sliding:false, off:null,
     lap:0, lapStart:null, last:null, best:null, offs:0, dist:0,
-    splits:[], finished:false, finishT:null, falseStart:false });
+    splits:[], finished:false, finishT:null, falseStart:false, penUntil:0, react:null, reactAt:null });
 }
 
 // ---------- Input ----------
@@ -497,7 +498,7 @@ function startLights() {
 function go() {
   race.phase = 'running';
   race.t0 = clock;
-  for (const c of activeCars()) c.lapStart = clock;
+  for (const c of activeCars()) { c.lapStart = clock; if (c.falseStart) c.penUntil = clock + PENALTY; }
   if (mode === 'crono') {
     race.rec = { dist:[], b:[], off:[], ox:[], oy:[], oyaw:[] };
     race.recStep = 0;
@@ -507,7 +508,7 @@ function go() {
 
 function finishCar(car) {
   car.finished = true;
-  car.finishT = car.splits[LAPS-1] + (car.falseStart ? PENALTY : 0);
+  car.finishT = car.splits[LAPS-1];   // la penalización ya está en el tiempo: se paga frenado
   if (activeCars().every(c => c.finished)) race.endAt = clock + (mode==='crono' ? 0.3 : 0);
 }
 
@@ -522,7 +523,7 @@ function endRace() {
   if (mode === 'crono') {
     const g = {
       fmt:1, track:T.id, phys:PHYS_VERSION, name: playerName(), date: new Date().toISOString(), car: player.sprite,
-      time: player.finishT, pen: player.falseStart ? PENALTY : 0, splits: player.splits.slice(),
+      time: player.finishT, pen: 0, splits: player.splits.slice(),
       startLane: player.lane, hz: GHOST_HZ,
       dist: Float32Array.from(race.rec.dist), b: Float32Array.from(race.rec.b), off: Uint8Array.from(race.rec.off),
       ox: Float32Array.from(race.rec.ox), oy: Float32Array.from(race.rec.oy), oyaw: Float32Array.from(race.rec.oyaw),
@@ -547,7 +548,11 @@ function simStep() {
       continue;
     }
     updateThrottle(car, H);
+    if (race.phase === 'running' && car.react === null && !car.falseStart && pressing(car)) {
+      car.react = clock - race.t0; car.reactAt = clock;   // tiempo de reacción: de que se apagan las luces a que apretás
+    }
     stepCar(car, H);
+    if (clock < car.penUntil && !car.off && car.v > PENALTY_V) car.v = PENALTY_V;   // largada en falso: freno casi total
   }
   if (race.rec && !race.recDone && race.phase !== 'idle') {
     if (++race.recStep % (600/GHOST_HZ) === 0) { sample(player); if (player.finished) race.recDone = true; }
@@ -911,7 +916,7 @@ function carPanel(car, x0, bw) {
   let line;
   if (mode === 'libre') line = `${car.name} · vuelta ${car.lap} · última ${fmt(car.last)} · mejor ${fmt(car.best)} · salidas ${car.offs}`;
   else line = `${car.name} · vuelta ${Math.min(car.lap+1, LAPS)}/${LAPS} · ${fmt(raceTime(car))} · última ${fmt(car.last)} · salidas ${car.offs}`
-            + (car.falseStart ? `  ⚠ largada en falso +${PENALTY} s` : '');
+            + (car.falseStart ? `  ⚠ largada en falso` : '');
   ctx.fillText(line, x0, 20);
   ctx.fillStyle = '#2a2d33'; ctx.fillRect(x0, 30, bw*0.45, 10);
   ctx.fillStyle = car.color; ctx.fillRect(x0, 30, bw*0.45*car.thr, 10);
@@ -936,8 +941,7 @@ function ghostPanel(x0) {
   if (race.phase === 'running' && !player.finished) {
     const tg = ghostTimeAt(g, player.dist);
     if (tg != null && player.dist > 30) {
-      // incluye las penalizaciones de ambos, para que coincida con el resultado final
-      const d = (clock - race.t0) - tg + (player.falseStart ? PENALTY : 0) - g.pen;
+      const d = (clock - race.t0) - tg - g.pen;
       ctx.font = '700 26px system-ui'; ctx.fillStyle = d <= 0 ? '#4cd36a' : '#ff5a4f';
       ctx.fillText(fmtD(d), x0, 54);
       ctx.font = '11px system-ui'; ctx.fillStyle = '#8a8f98';
@@ -977,6 +981,15 @@ function drawRaceOverlay(w, hgt) {
       ctx.fillStyle = race.phase === 'running' ? '#2fd05a' : (i < on ? '#ff2a1f' : '#2a1414'); ctx.fill();
     }
   }
+  if (race.phase === 'running' && mode === 'crono') {
+    if (player.falseStart && clock < player.penUntil) {
+      ctx.fillStyle = '#ff5a4f'; ctx.font = '700 20px system-ui';
+      ctx.fillText(`Largada en falso · freno ${(player.penUntil - clock).toFixed(1)} s`, cx, cy + 58);
+    } else if (player.react !== null && clock - player.reactAt < 2.5) {
+      ctx.fillStyle = player.react < 0.3 ? '#4cd36a' : '#e8e8e8'; ctx.font = '700 22px system-ui';
+      ctx.fillText(`Reacción ${player.react.toFixed(3)} s`, cx, cy + 58);
+    }
+  }
   if (race.phase === 'done' && race.result) drawResults(cx, cy);
   ctx.textAlign = 'left';
 }
@@ -986,7 +999,8 @@ function drawResults(cx, cy) {
   const rows = [];   // [texto, color, fuente]
   if (mode === 'crono') {
     rows.push([r.record ? '¡Nuevo récord!' : 'Resultado', r.record ? '#ffd34d' : '#e8e8e8', '700 22px system-ui']);
-    rows.push([`Tiempo ${fmt(player.finishT)}` + (player.falseStart ? `  (incluye +${PENALTY} s de largada en falso)` : ''), '#e8e8e8', '600 15px system-ui']);
+    rows.push([`Tiempo ${fmt(player.finishT)}` + (player.falseStart ? `  (largada en falso: ${PENALTY} s frenado)` : ''), '#e8e8e8', '600 15px system-ui']);
+    if (player.react !== null) rows.push([`Reacción ${player.react.toFixed(3)} s`, '#8a8f98', '13px system-ui']);
     if (r.vs) {
       const d = player.finishT - r.vs.time;
       rows.push([`vs ${r.vs.name}: ${fmtD(d)} s`, d <= 0 ? '#4cd36a' : '#ff5a4f', '600 15px system-ui']);
