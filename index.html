@@ -183,6 +183,17 @@ const TRACKS = [
       .map(p => p[0]==='S' ? ['S', p[1]*LZ] : ['A', p[1], p[2]*LZ]),
     swap: { piece:2, len:200 },        // cruce de carriles en la recta corta donde largaba antes
     cross: { under:'second', tunnelHalf:70, bridgeHalf:95 } },   // el aro (primera pasada) por el puente; la cola, por el túnel
+  // Pista inventada: escalera. Recta de largada, un escalón (curva a derecha, a izquierda y a derecha),
+  // un giro en U abierto en el fondo derecho, y una larga recta de vuelta con una S suave antes de subir
+  // por la izquierda.
+  // Giro neto de 360° (horario): hace falta cruce de carriles. Sin cruces de pista ni puentes.
+  { id:'escalera-1', name:'Escalera · escalón y S',
+    startAt: 160,
+    close: [8, 11],                    // la recta larga de abajo y la subida de la izquierda: las calcula closePieces
+    pieces: [['S',480],['A',90,130],['S',100],['A',-90,110],['S',170],['A',90,130],['S',90],['A',90,130],
+             ['S',0],['SS',260,70],['A',90,130],['S',0],['A',90,130]],
+    swap: { piece:8, len:260 },        // cruce de carriles en la recta larga de abajo
+    structures: [] },
 ];
 const DEFAULT_TRACK = TRACKS[0].id;
 
