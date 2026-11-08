@@ -341,8 +341,25 @@ function buildTrack(def0) {
   }
   return { id:def.id, name:def.name, def, center, pieceStart, routes, starts, mid, lapLen,
            raceDist: lapLen*LAPS, th0: def.th0 || 0,
-           cx: center.map(p=>p.x), cy: center.map(p=>p.y), lvC: center.map(p=>p.lv), hC: center.map(p=>p.h) };
+           cx: center.map(p=>p.x), cy: center.map(p=>p.y), lvC: center.map(p=>p.lv), hC: center.map(p=>p.h), counter: computeCounter(center) };
 }
+// Contador de vueltas, al costado de la línea de largada (como los viejos Scalextric). Busca de qué
+// lado de la recta hay lugar: prefiere el lado de adentro del circuito, siempre que no choque con otro
+// tramo de pista.
+const COUNTER = { w:95, h:55, off:78 };   // medidas de la caja y distancia de su centro al eje de la pista
+function computeCounter(center) {
+  const p0 = center[0], n = center.length, nx = -Math.sin(p0.th), ny = Math.cos(p0.th);
+  const mx = center.reduce((t, p) => t + p.x, 0)/n, my = center.reduce((t, p) => t + p.y, 0)/n;
+  const cands = [1, -1].map(side => {
+    const x = p0.x + nx*side*COUNTER.off, y = p0.y + ny*side*COUNTER.off;
+    let free = Infinity;
+    for (let i=200;i<n-200;i++) free = Math.min(free, Math.hypot(center[i].x - x, center[i].y - y));
+    return { x, y, free, ok: free >= COUNTER.off + 30, toMid: Math.hypot(mx - x, my - y) };
+  });
+  const pick = cands.filter(c => c.ok).sort((a, b) => a.toMid - b.toMid)[0] || cands.sort((a, b) => b.free - a.free)[0];
+  return { x:pick.x, y:pick.y, a: Math.cos(p0.th) < 0 ? p0.th + Math.PI : p0.th };   // de pie: nunca cabeza abajo
+}
+
 const builtTracks = {};
 const getTrack = id => builtTracks[id] || (builtTracks[id] = buildTrack(TRACKS.find(t => t.id === id)));
 let T = getTrack(DEFAULT_TRACK);            // pista actual
@@ -705,7 +722,12 @@ let world = { minx:0, maxx:1, miny:0, maxy:1 };
 function resize() {
   const r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
   cv.width = r.width*dpr; cv.height = r.height*dpr;
-  const xs = T.cx, ys = T.cy, m = LANE+60;
+  const xs = [...T.cx], ys = [...T.cy], m = LANE+60;
+  { const c = T.counter, ca = Math.cos(c.a), sa = Math.sin(c.a);   // la caja del contador también tiene que entrar en pantalla
+    for (const [dx, dy] of [[-1,-1],[1,-1],[1,1],[-1,1]]) {
+      const lx = dx*(COUNTER.w/2 + 20), ly = dy*(COUNTER.h/2 + 20);
+      xs.push(c.x + lx*ca - ly*sa + 0); ys.push(c.y + lx*sa + ly*ca);
+    } }
   world = { minx:Math.min(...xs)-m, maxx:Math.max(...xs)+m, miny:Math.min(...ys)-m, maxy:Math.max(...ys)+m };
   // fit = escala (px CSS por unidad de mundo) con la que entra la pista completa
   const fit = Math.min(r.width/(world.maxx-world.minx), (r.height-HUD_H)/(world.maxy-world.miny));
@@ -798,19 +820,38 @@ function drawGround() {
     ctx.fillRect(r*6-6, -half + i*6, 6, 6);
   }
   ctx.restore();
-  // Vuelta en curso, pintada en el asfalto justo después de la línea de largada: así se leen sin
-  // despegar la vista del coche. El número cambia en el momento de cruzar la línea y se inclina como la
-  // pista (si quedaría cabeza abajo, se da vuelta media vuelta para que se lea). En la última vuelta se pone ámbar.
-  if (mode === 'crono') {
-    const p = T.center[Math.min(T.center.length-1, 46)], cur = Math.min(player.lap + 1, LAPS);
-    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(Math.cos(p.th) < 0 ? p.th + Math.PI : p.th);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = '500 26px system-ui'; ctx.fillStyle = cur === LAPS ? 'rgba(255,200,60,.8)' : 'rgba(255,255,255,.6)';
-    ctx.textBaseline = 'alphabetic';   // centrado óptico: según lo que miden las cifras, no la caja de la fuente
-    const txt = `${cur}/${LAPS}`, m = ctx.measureText(txt);
-    ctx.fillText(txt, 0, (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent)/2);
-    ctx.restore();
+  drawLapCounter();
+}
+
+// Contador de vueltas: una cajita negra con dígitos de siete segmentos rojos, como las calculadoras
+// viejas, al costado de la línea de largada. Muestra la vuelta en curso sobre el total (solo en Contrarreloj).
+const SEG = { 0:'abcdef', 1:'bc', 2:'abged', 3:'abgcd', 4:'fgbc', 5:'afgcd', 6:'afgedc', 7:'abc', 8:'abcdefg', 9:'abcdfg' };
+function drawDigit(cx, cy, d, lit) {
+  const W = 14, H = 26, t = 3.2, w2 = W/2, h2 = H/2, g = 0.8;
+  const hseg = y => { const l = w2 - t/2 - g; ctx.moveTo(cx-l-t/2, cy+y); ctx.lineTo(cx-l, cy+y-t/2); ctx.lineTo(cx+l, cy+y-t/2); ctx.lineTo(cx+l+t/2, cy+y); ctx.lineTo(cx+l, cy+y+t/2); ctx.lineTo(cx-l, cy+y+t/2); ctx.closePath(); };
+  const vseg = (x, y0, y1) => { const a = y0 + t/2 + g, b = y1 - t/2 - g; ctx.moveTo(cx+x, a-t/2); ctx.lineTo(cx+x+t/2, a); ctx.lineTo(cx+x+t/2, b); ctx.lineTo(cx+x, b+t/2); ctx.lineTo(cx+x-t/2, b); ctx.lineTo(cx+x-t/2, a); ctx.closePath(); };
+  const draw = { a:() => hseg(-h2), g:() => hseg(0), d:() => hseg(h2), f:() => vseg(-w2, -h2, 0), b:() => vseg(w2, -h2, 0), e:() => vseg(-w2, 0, h2), c:() => vseg(w2, 0, h2) };
+  const on = SEG[d] || '';
+  for (const k of 'abcdefg') {   // primero los apagados (se ven apenas), después los encendidos con brillo
+    if (on.includes(k) === lit) { ctx.beginPath(); draw[k](); ctx.fill(); }
   }
+}
+
+function drawLapCounter() {
+  if (mode !== 'crono') return;
+  const c = T.counter, cur = Math.min(player.lap + 1, LAPS), w = 76, h = 44;   // se dibuja a 76×44 y se escala a COUNTER
+  ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.a); ctx.scale(COUNTER.w/w, COUNTER.w/w);
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.roundRect(-w/2 + 3, -h/2 + 4, w, h, 7); ctx.fill();   // sombra
+  ctx.fillStyle = '#26282d'; ctx.strokeStyle = '#555a63'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(-w/2, -h/2, w, h, 7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#080404'; ctx.beginPath(); ctx.roundRect(-w/2 + 5, -h/2 + 5, w - 10, h - 10, 4); ctx.fill();
+  const xs = [-17, 17];
+  ctx.fillStyle = '#240a08';                                             // segmentos apagados
+  drawDigit(xs[0], 0, cur % 10, false); drawDigit(xs[1], 0, LAPS % 10, false);
+  ctx.fillStyle = '#ff4435'; ctx.shadowColor = '#ff2a1f'; ctx.shadowBlur = 7;   // encendidos
+  drawDigit(xs[0], 0, cur % 10, true); drawDigit(xs[1], 0, LAPS % 10, true);
+  ctx.beginPath(); ctx.moveTo(1.5, -9); ctx.lineTo(4.5, -9); ctx.lineTo(-1.5, 9); ctx.lineTo(-4.5, 9); ctx.closePath(); ctx.fill();   // la barra del "/"
+  ctx.restore();
 }
 
 // Boca de un túnel: marco de piedra y la sombra de la entrada. dir = +1 entrada, -1 salida.
