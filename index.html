@@ -129,6 +129,7 @@ const DAMP = 4;        // amortiguación del giro del chasis
 const SCRUB = 2.0;     // pérdida de velocidad al ir cruzado
 const LANE = 22;       // separación del carril respecto al centro
 const LAPS = 4;        // vueltas por carrera (par: con el cruce de carriles, 2 vueltas = mismo recorrido)
+const LIGHTS = 3;     // luces rojas del semáforo de largada (una por cada 0,8 s)
 const PENALTY = 1;     // segundos de freno casi total tras largar, si hubo largada en falso
 const PENALTY_V = 25;  // velocidad máxima (unidades/s) durante esa penalización: el coche apenas se arrastra
 const GHOST_HZ = 30;   // muestras por segundo del fantasma
@@ -541,7 +542,7 @@ function resetRace() {
 function startLights() {
   race.phase = 'lights';
   race.lightsStart = clock;
-  race.goAt = clock + 5*0.8 + 0.4 + Math.random()*1.4;   // 5 luces, y se apagan tras una espera al azar
+  race.goAt = clock + LIGHTS*0.8 + 0.4 + Math.random()*1.4;   // las luces se prenden de a una y se apagan tras una espera al azar
 }
 
 function go() {
@@ -1061,7 +1062,7 @@ function drawRaceOverlay(w, hgt) {
     else show = player.react !== null ? clock - player.reactAt < 2.5 : sinceGo < 3;
   }
   if (show) {
-    box(tx, ty, 5*40+24, 70);
+    box(tx, ty, 224, 70);
     if (race.phase === 'running' && player.falseStart) {
       ctx.fillStyle = '#ff5a4f'; ctx.font = '700 18px system-ui'; ctx.fillText('Largada en falso', tx, ty - 4);
       ctx.fillStyle = '#e8e8e8'; ctx.font = '600 14px system-ui';
@@ -1071,9 +1072,9 @@ function drawRaceOverlay(w, hgt) {
       ctx.fillText(`${player.react.toFixed(3)} s`, tx, ty + 8);
       ctx.fillStyle = '#8a8f98'; ctx.font = '600 11px system-ui'; ctx.fillText('REACCIÓN', tx, ty - 22);
     } else {
-      const on = race.phase === 'lights' ? Math.min(5, Math.floor((clock - race.lightsStart)/0.8)) : 0;
-      for (let i=0;i<5;i++) {
-        ctx.beginPath(); ctx.arc(tx - 2*40 + i*40, ty, 15, 0, Math.PI*2);
+      const on = race.phase === 'lights' ? Math.min(LIGHTS, Math.floor((clock - race.lightsStart)/0.8)) : 0;
+      for (let i=0;i<LIGHTS;i++) {
+        ctx.beginPath(); ctx.arc(tx + (i - (LIGHTS-1)/2)*56, ty, 17, 0, Math.PI*2);
         ctx.fillStyle = race.phase === 'running' ? '#2fd05a' : (i < on ? '#ff2a1f' : '#2a1414'); ctx.fill();
       }
     }
@@ -1210,7 +1211,7 @@ function updateAudio() {
   audio.prevFalse = car.falseStart;
   // semáforo: un pitido por cada luz que se enciende y uno largo y más agudo al apagarse
   if (race.phase === 'lights') {
-    const on = Math.min(5, Math.floor((clock - race.lightsStart)/0.8));
+    const on = Math.min(LIGHTS, Math.floor((clock - race.lightsStart)/0.8));
     while (audio.lightsOn < on) { audio.lightsOn++; beep(1000, 0.2, 0.2); }
   } else {
     if (audio.prevPhase === 'lights' && race.phase === 'running') beep(1500, 0.6, 0.22);
