@@ -806,7 +806,9 @@ function drawGround() {
     ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(Math.cos(p.th) < 0 ? p.th + Math.PI : p.th);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.font = '500 26px system-ui'; ctx.fillStyle = cur === LAPS ? 'rgba(255,200,60,.8)' : 'rgba(255,255,255,.6)';
-    ctx.fillText(`${cur}/${LAPS}`, 0, 0);
+    ctx.textBaseline = 'alphabetic';   // centrado óptico: según lo que miden las cifras, no la caja de la fuente
+    const txt = `${cur}/${LAPS}`, m = ctx.measureText(txt);
+    ctx.fillText(txt, 0, (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent)/2);
     ctx.restore();
   }
 }
