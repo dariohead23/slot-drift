@@ -456,7 +456,7 @@ function deslot(car, k) {
   const q = laneAt(rtOf(car), car.s);
   const yaw = q.th - car.b;
   car.off = { x:q.x, y:q.y, vx:Math.cos(q.th)*car.v, vy:Math.sin(q.th)*car.v,
-              yaw, w: car.v*k - car.bd, t:0, s:car.s };
+              yaw, w: car.v*k - car.bd, t:0, s:car.s, lv:q.lv };
   car.offs++;
 }
 
@@ -555,6 +555,20 @@ function simStep() {
   if (race.phase === 'running' && race.endAt != null && clock >= race.endAt) { race.endAt = null; endRace(); }
 }
 
+// Nivel de dibujo de un coche fuera de pista. Si salió desde un puente, sigue encima; si está sobre
+// la rampa de un puente (que ahí es baja) también se dibuja encima, para que no parezca que se
+// mete por debajo. Bajo el tramo plano, en cambio, sí queda tapado.
+function offLevel(x, y, from) {
+  if (from > 0) return 1;
+  const { cx, cy, hC } = T, r2 = (ROAD_W/2 + 8)**2;
+  for (let i=0;i<hC.length;i++) {
+    if (hC[i] <= 0 || hC[i] >= 1) continue;
+    const dx = cx[i]-x, dy = cy[i]-y;
+    if (dx*dx + dy*dy < r2) return 1;
+  }
+  return 0;
+}
+
 // ---------- Fantasmas ----------
 // Se graba la distancia recorrida y el ángulo de la cola (no las teclas): así se
 // reproduce idéntico en cualquier navegador. Si el coche estaba fuera de pista,
@@ -566,7 +580,7 @@ function ghostPose(g, t) {
   const j = Math.min(i+1, n-1), a = f - i;
   if (g.off[i]) {
     const u = g.off[j] ? a : 0;
-    return { x: g.ox[i]+(g.ox[j]-g.ox[i])*u, y: g.oy[i]+(g.oy[j]-g.oy[i])*u, yaw: g.oyaw[i]+(g.oyaw[j]-g.oyaw[i])*u, lv:0 };
+    return { x: g.ox[i]+(g.ox[j]-g.ox[i])*u, y: g.oy[i]+(g.oy[j]-g.oy[i])*u, yaw: g.oyaw[i]+(g.oyaw[j]-g.oyaw[i])*u, lv:offLevel(g.ox[i]+(g.ox[j]-g.ox[i])*u, g.oy[i]+(g.oy[j]-g.oy[i])*u, 0) };
   }
   const u = g.off[j] ? 0 : a;
   const dist = g.dist[i] + (g.dist[j]-g.dist[i])*u, b = g.b[i] + (g.b[j]-g.b[i])*u;
@@ -680,7 +694,7 @@ function resize() {
 addEventListener('resize', resize);
 
 function carPose(car) {
-  if (car.off) return { x:car.off.x, y:car.off.y, yaw:car.off.yaw, lv:0 };
+  if (car.off) return { x:car.off.x, y:car.off.y, yaw:car.off.yaw, lv:offLevel(car.off.x, car.off.y, car.off.lv) };
   const q = laneAt(rtOf(car), car.s);
   return { x:q.x, y:q.y, yaw:q.th - car.b, lv:q.lv };
 }
