@@ -153,8 +153,10 @@ const BRIDGE_RAMP = 90;   // largo (unidades) de cada rampa de puente
 const LZ = 0.8;     // escala de El Lazo: más chico para que entre en pantalla
 const EIGHT = { R:170, M:240, D:339.705627 };   // D se resolvió para que el 8 cierre exacto
 const TRACKS = [
-  { id:'cruce-1', name:'Clásica · cruce de carriles',
-    pieces: [['S',600],['A',180,140],['S',200],['A',-90,80],['A',90,80],['S',240],['A',90,100],['S',240],['A',90,100]]
+  { id:'cruce-2', name:'Clásica · cruce de carriles',
+    // La largada está 375 unidades adentro de la recta principal (900): la recta se parte en dos, la
+    // segunda parte (S 250×1.5) va al final y la primera (S 350×1.5) al principio. El resto no cambia.
+    pieces: [['S',350],['A',180,140],['S',200],['A',-90,80],['A',90,80],['S',240],['A',90,100],['S',240],['A',90,100],['S',250]]
       .map(p => p[0]==='S' ? ['S', p[1]*SCALE] : ['A', p[1], p[2]*SCALE]),
     swap: { piece:5, len:260 },       // el cruce de carriles va en la recta después de la S
     structures: [] },
