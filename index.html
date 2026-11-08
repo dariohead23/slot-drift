@@ -26,11 +26,13 @@
   .radio { display:flex; gap:8px; align-items:center; margin:5px 0; font-size:13px; cursor:pointer; }
   .radio.dis { opacity:.4; cursor:default; }
   .radio small { color:var(--muted); }
-  #carGrid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
-  #carGrid button { padding:5px 3px; background:#14161a; border:1px solid #333; border-radius:6px; line-height:0; }
-  #carGrid button:hover { background:#1c2027; }
-  #carGrid button.on { background:#2b3140; border-color:#9aa6bd; }
-  #carGrid img { width:100%; display:block; }
+  #carGrid, #trackGrid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+  #trackGrid { grid-template-columns:repeat(2,1fr); }
+  #carGrid button, #trackGrid button { padding:5px 3px; background:#14161a; border:1px solid #333; border-radius:6px; line-height:0; }
+  #carGrid button:hover, #trackGrid button:hover { background:#1c2027; }
+  #carGrid button.on, #trackGrid button.on { background:#2b3140; border-color:#9aa6bd; }
+  #carGrid img, #trackGrid canvas { width:100%; display:block; }
+  #trackGrid canvas { border-radius:4px; }
   .credit { margin-top:18px; }
   .credit a { color:#9aa4b5; }
   select { width:100%; padding:7px; background:#14161a; color:var(--fg); border:1px solid #444; border-radius:6px; font:inherit; }
@@ -54,7 +56,7 @@
   <div id="game"><canvas id="c"></canvas><div id="toast"></div></div>
   <div id="side">
     <h2>Pista</h2>
-    <select id="trackSel"></select>
+    <div id="trackGrid"></div>
 
     <div class="hint" id="modeHint"></div>
 
@@ -1315,13 +1317,48 @@ function setMode(m) {
 
 function setTrack(id) {
   T = getTrack(id);
-  store.set('track', id); $('trackSel').value = id;
+  store.set('track', id); markTrack(id);
   resize();            // recalcula el encuadre de la pista completa
   renderGhostList();   // los fantasmas son por pista
   resetRace();
 }
-for (const t of TRACKS) $('trackSel').add(new Option(t.name, t.id));
-$('trackSel').onchange = e => { setTrack(e.target.value); e.target.blur(); };
+
+// Selector de pista: una miniatura de cada pista, dos por fila (para sumar más pistas solo hay que
+// agregarlas a TRACKS). La miniatura se dibuja sola a partir del trazado.
+function trackThumb(id) {
+  const t = getTrack(id), W = 240, H = 150, pad = 12, cnv = document.createElement('canvas');
+  cnv.width = W; cnv.height = H;
+  const g = cnv.getContext('2d');
+  g.fillStyle = '#1f3a24'; g.fillRect(0, 0, W, H);
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i=0;i<t.cx.length;i++) { x0 = Math.min(x0, t.cx[i]); x1 = Math.max(x1, t.cx[i]); y0 = Math.min(y0, t.cy[i]); y1 = Math.max(y1, t.cy[i]); }
+  const k = Math.min((W - 2*pad)/(x1 - x0 + ROAD_W), (H - 2*pad)/(y1 - y0 + ROAD_W));
+  g.translate(W/2 - (x0 + x1)/2*k, H/2 - (y0 + y1)/2*k); g.scale(k, k);
+  g.lineJoin = 'round'; g.lineCap = 'butt';
+  const stroke = (a, b, col, w) => {   // tramo a..b de la línea central
+    g.beginPath(); g.moveTo(t.cx[a], t.cy[a]);
+    for (let i=a+2;i<=b;i+=2) g.lineTo(t.cx[i], t.cy[i]);
+    g.lineTo(t.cx[(b+1) % t.cx.length], t.cy[(b+1) % t.cx.length]);
+    g.strokeStyle = col; g.lineWidth = w; g.stroke();
+  };
+  const n = t.cx.length, edge = ROAD_W + 8/k*0.5;
+  stroke(0, n-1, '#c9ccd2', edge); stroke(0, n-1, '#3a3d44', ROAD_W);                    // pista: borde claro y asfalto
+  runsOf(t.lvC, v => v < 0, (a, b) => stroke(a, b, '#5c6254', ROAD_W + 10));            // túneles
+  runsOf(t.lvC, v => v > 0, (a, b) => { stroke(a, b, '#c9ccd2', edge); stroke(a, b, '#3a3d44', ROAD_W); });   // puentes, encima
+  g.save(); g.translate(t.cx[0], t.cy[0]); g.rotate(t.th0);                                // línea de largada
+  g.fillStyle = '#fff'; g.fillRect(-4, -ROAD_W/2, 8, ROAD_W); g.restore();
+  return cnv;
+}
+function markTrack(id) {
+  document.querySelectorAll('#trackGrid button').forEach(b => b.classList.toggle('on', b.dataset.track === id));
+}
+for (const t of TRACKS) {
+  const b = document.createElement('button');
+  b.dataset.track = t.id; b.title = t.name;
+  b.appendChild(trackThumb(t.id));
+  b.onclick = () => { setTrack(t.id); b.blur(); };
+  $('trackGrid').appendChild(b);
+}
 
 function renderGhostList() {
   const opts = [['none', 'Sin fantasma', null], ['best', 'Mi mejor', loadGhost('best')], ['last', 'Mi última', loadGhost('last')], ['imported', 'Importado', loadGhost('imported')]];
@@ -1401,7 +1438,7 @@ setMuted(audio.muted);
 // ?pista=<id> permite abrir el juego directo en una pista (para compartir o probar)
 const qs = new URLSearchParams(location.search);
 const wantTrack = [qs.get('pista'), store.get('track')].find(id => TRACKS.some(t => t.id === id)) || DEFAULT_TRACK;
-T = getTrack(wantTrack); $('trackSel').value = wantTrack;
+T = getTrack(wantTrack); markTrack(wantTrack);
 renderGhostList();
 setMode('crono');
 resize();
