@@ -63,15 +63,6 @@
     </div>
     <div class="hint" id="modeHint"></div>
 
-    <h2>Cámara <kbd>C</kbd></h2>
-    <div class="seg">
-      <button data-cam="follow">Seguir</button>
-      <button data-cam="full">Pista completa</button>
-    </div>
-    <label class="hint" style="display:block;margin-top:8px">Zoom <span id="zoomVal" style="float:right"></span>
-      <input id="zoom" type="range" min="0.7" max="3" step="0.1">
-    </label>
-
     <h2>Auto</h2>
     <div id="carGrid"></div>
 
@@ -154,10 +145,8 @@ const GHOST_HZ = 30;   // muestras por segundo del fantasma
 // Sin swap (un 8, por ejemplo, cuyo giro neto es 0) los dos carriles miden exactamente lo
 // mismo, así que cada uno es un circuito de una vuelta y no hace falta cambiarlos.
 const SCALE = 1.5;
+const LZ = 0.8;     // escala de El Lazo: más chico para que entre en pantalla
 const EIGHT = { R:170, M:240, D:339.705627 };   // D se resolvió para que el 8 cierre exacto
-// El Lazo se estira con estos dos números sin tocar el resto del trazado: STRETCH.y alarga la
-// recta de la derecha (y, por 'close', la de la izquierda); STRETCH.x alarga la de abajo (y la de arriba).
-const STRETCH = { x:150, y:150 };
 const TRACKS = [
   { id:'cruce-1', name:'Clásica · cruce de carriles',
     pieces: [['S',600],['A',180,140],['S',200],['A',-90,80],['A',90,80],['S',240],['A',90,100],['S',240],['A',90,100]]
@@ -172,29 +161,16 @@ const TRACKS = [
     structures: [   // el centro de cada recta larga es el punto donde se cruzan
       { kind:'tunnel', piece:0, from:EIGHT.D-75,  to:EIGHT.D+75 },
       { kind:'bridge', piece:4, from:EIGHT.D-105, to:EIGHT.D+105 } ] },
-  // Boceto del usuario (1 px del dibujo = 1 unidad). Va en sentido horario. Tiene un lazo chico
-  // (radio 82), una vuelta en U que la recta de bajada cruza por encima, un gancho con S y una
-  // serpiente de dos S. Giro neto de 720°, así que un carril es mucho más corto que el otro y
-  // hace falta cruce de carriles (en una recta horizontal, la inferior).
-  { id:'lazo-1', name:'El Lazo · lazo, gancho y serpiente',
-    close: [0, 10],                    // largo de la recta superior y de la izquierda: lo calcula closePieces
-    pieces: [
-      ['S',0],                         //  0 recta superior (largada); su largo lo fija 'close'
-      ['A',90,195],                    //  1 curva arriba a la derecha
-      ['S',430+STRETCH.y],             //  2 recta larga de la derecha
-      ['A',180,165],                   //  3 vuelta en U grande
-      ['A',180,82],                    //  4 lazo chico
-      ['S',350],                       //  5 recta de bajada (cruza la U)
-      ['SS',238,-169],                 //  6 S del gancho, hacia la izquierda del rumbo (este)
-      ['A',90,175],                    //  7 curva del gancho
-      ['S',355+STRETCH.x],             //  8 recta inferior (cruce de carriles)
-      ['A',90,190],                    //  9 curva abajo a la izquierda
-      ['S',0],                         // 10 recta izquierda; su largo lo fija 'close'
-      ['SS',350,156],                  // 11 primera S de la serpiente, hacia la derecha (este)
-      ['SS',350,-156],                 // 12 segunda S, de vuelta al oeste
-      ['A',90,175] ],                  // 13 curva arriba a la izquierda
-    swap: { piece:8, len:260 },        // cruce de carriles en la recta inferior (con 0 iría en la superior)
-    cross: { under:'first', tunnelHalf:75, bridgeHalf:105 } },   // la U va por el túnel; la bajada, por el puente
+  // Boceto del usuario (lazo.jpeg), a escala LZ. Va en sentido horario: recta superior (largada),
+  // curva grande, bajada por la derecha, curva hacia el aro, aro de 270° que se cierra sobre la
+  // bajada hacia la "cola" (se cruza consigo misma: el aro pasa por arriba, la cola por abajo),
+  // U de abajo y subida por la izquierda. Giro neto de 720°: hace falta cruce de carriles.
+  { id:'lazo-2', name:'El Lazo · aro y cola',
+    pieces: [['S',330],['A',90,230],['S',360],['A',90,150],['S',270],['A',270,140],['S',380],
+             ['A',180,240],['S',780],['A',90,200]]
+      .map(p => p[0]==='S' ? ['S', p[1]*LZ] : ['A', p[1], p[2]*LZ]),
+    swap: { piece:8, len:260 },        // cruce de carriles en la subida de la izquierda
+    cross: { under:'second', tunnelHalf:70, bridgeHalf:95 } },   // el aro (primera pasada) por el puente; la cola, por el túnel
 ];
 const DEFAULT_TRACK = TRACKS[0].id;
 
@@ -381,7 +357,6 @@ addEventListener('keydown', e => {
   if (['ArrowUp','ArrowDown','Space','Enter'].includes(e.code)) e.preventDefault();
   down.add(e.code);
   if (e.code==='KeyR') resetRace();
-  if (e.code==='KeyC') setCam(camMode==='follow' ? 'full' : 'follow');
   if ((e.code==='Enter' || e.code==='NumpadEnter') && mode!=='libre' && !e.repeat) {
     if (race.phase==='done') resetRace();
     if (race.phase==='idle') startLights();
@@ -480,7 +455,6 @@ function stepOff(car, h) {
   o.x += o.vx*h; o.y += o.vy*h; o.yaw += o.w*h;
   if (sp < 5 && o.t > 1.2) {   // el "comisario" lo vuelve a poner en la pista
     Object.assign(car, { s:o.s, v:0, b:geoAngle(laneAt(rtOf(car), o.s).k), bd:0, thr:0, sliding:false, off:null });
-    cam.snap = true;   // la cámara salta al lugar donde reaparece, en vez de recorrer la pista
   }
 }
 
@@ -498,7 +472,6 @@ function resetRace() {
   player.start = T.starts[player.lane];
   cars.forEach(resetCar);
   skids = [];
-  cam.snap = true;
 }
 
 function startLights() {
@@ -689,7 +662,6 @@ function resize() {
   // fit = escala (px CSS por unidad de mundo) con la que entra la pista completa
   const fit = Math.min(r.width/(world.maxx-world.minx), (r.height-HUD_H)/(world.maxy-world.miny));
   view = { ...view, fit, dpr, w:r.width, h:r.height };
-  cam.snap = true;
 }
 addEventListener('resize', resize);
 
@@ -700,40 +672,15 @@ function carPose(car) {
 }
 
 // ---------- Cámara ----------
-// 'full': se ve la pista entera. 'follow': zoom sobre tu coche, mirando un poco hacia
-// adelante según la velocidad. El movimiento es suave (exponencial) y el cambio de modo
-// hace la transición con zoom animado.
-const cam = { x:0, y:0, s:1, snap:true };
-let camMode = store.get('cam') === 'full' ? 'full' : 'follow';
-// El zoom es absoluto: 1× muestra CAM_BASE unidades de pista en el lado más corto de la
-// pantalla, sea cual sea el tamaño de la pista. Así se ve lo mismo en todas.
-let camZoom = Math.min(3, Math.max(0.7, +store.get('camZoom2') || 1.1));
-const CAM_BASE = 900;
-const CAM_RATE = 10;       // rapidez con la que la cámara alcanza su objetivo (1/s)
-const CAM_LOOK = 0.18;     // segundos de velocidad que se adelanta la cámara. Con RATE×LOOK = 1 el coche
-                           // queda centrado; con más, queda un poco por detrás del centro y se ve más
-                           // pista por delante (a 1000 px/s, unas 80 unidades)
+// Fija: se ve la pista entera.
+const cam = { x:0, y:0, s:1 };
 
 function camTarget() {
-  const fit = view.fit;
-  if (camMode === 'full') return { x:(world.minx+world.maxx)/2, y:(world.miny+world.maxy)/2, s:fit };
-  const q = carPose(player);
-  // velocidad real del coche: sobre la ranura, o en vuelo si se salió de la pista
-  let vx, vy;
-  if (player.off) { vx = player.off.vx; vy = player.off.vy; }
-  else { const th = laneAt(rtOf(player), player.s).th; vx = Math.cos(th)*player.v; vy = Math.sin(th)*player.v; }
-  const base = Math.min(view.w, view.h - HUD_H) / CAM_BASE;   // px CSS por unidad de mundo a 1×
-  return { x:q.x + vx*CAM_LOOK, y:q.y + vy*CAM_LOOK, s:Math.max(fit, base*camZoom) };   // nunca más lejos que la pista completa
+  return { x:(world.minx+world.maxx)/2, y:(world.miny+world.maxy)/2, s:view.fit };
 }
 
-function updateCamera(dt) {
-  const t = camTarget();
-  if (cam.snap) { Object.assign(cam, t); cam.snap = false; }
-  else {
-    const a = 1 - Math.exp(-dt*CAM_RATE);
-    cam.x += (t.x-cam.x)*a; cam.y += (t.y-cam.y)*a;
-    cam.s *= Math.pow(t.s/cam.s, a);          // el zoom se interpola en escala logarítmica
-  }
+function updateCamera() {
+  Object.assign(cam, camTarget());
   const sc = cam.s*view.dpr;
   view.sc = sc;
   view.ox = view.w/2*view.dpr - cam.x*sc;
@@ -1334,21 +1281,9 @@ $('vol').addEventListener('input', () => { audio.vol = +$('vol').value; $('volVa
 $('vol').addEventListener('keydown', e => e.preventDefault());
 setMuted(audio.muted);
 
-function setCam(m) {
-  camMode = m; store.set('cam', m);
-  document.querySelectorAll('[data-cam]').forEach(b => b.classList.toggle('on', b.dataset.cam === m));
-  $('zoom').disabled = m === 'full';
-}
-document.querySelectorAll('[data-cam]').forEach(b => b.onclick = () => { setCam(b.dataset.cam); b.blur(); });
-$('zoom').value = camZoom; $('zoomVal').textContent = camZoom.toFixed(1) + '×';
-$('zoom').addEventListener('input', () => { camZoom = +$('zoom').value; $('zoomVal').textContent = camZoom.toFixed(1) + '×'; store.set('camZoom2', camZoom); });
-$('zoom').addEventListener('keydown', e => e.preventDefault());
-setCam(camMode);
-
-// ?pista=<id> y ?cam=full|follow permiten abrir el juego directo en una pista o cámara (para compartir o probar)
+// ?pista=<id> permite abrir el juego directo en una pista (para compartir o probar)
 const qs = new URLSearchParams(location.search);
 const wantTrack = [qs.get('pista'), store.get('track')].find(id => TRACKS.some(t => t.id === id)) || DEFAULT_TRACK;
-if (['full','follow'].includes(qs.get('cam'))) setCam(qs.get('cam'));
 T = getTrack(wantTrack); $('trackSel').value = wantTrack;
 renderGhostList();
 setMode(['libre','crono'].includes(store.get('mode')) ? store.get('mode') : 'libre');
