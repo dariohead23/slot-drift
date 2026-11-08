@@ -798,6 +798,16 @@ function drawGround() {
     ctx.fillRect(r*6-6, -half + i*6, 6, 6);
   }
   ctx.restore();
+  // Vueltas completadas, pintadas en el asfalto justo después de la línea de largada: así se leen sin
+  // despegar la vista del coche. El número cambia en el momento de cruzar la línea (queda de pie, no gira
+  // con la pista). En la última vuelta se pone ámbar.
+  if (mode === 'crono') {
+    const p = T.center[Math.min(T.center.length-1, 75)], done = Math.min(player.lap, LAPS);
+    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = '700 36px system-ui'; ctx.fillStyle = done === LAPS-1 ? 'rgba(255,200,60,.8)' : 'rgba(255,255,255,.6)';
+    ctx.fillText(`${done}/${LAPS}`, p.x, p.y);
+    ctx.restore();
+  }
 }
 
 // Boca de un túnel: marco de piedra y la sombra de la entrada. dir = +1 entrada, -1 salida.
