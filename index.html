@@ -455,7 +455,7 @@ function stepCar(car, h) {
     car.lapStart = clock;
     if (mode !== 'libre' && !car.finished) {
       car.splits.push(clock - race.t0);
-      sfxLap(car.lap >= LAPS);
+      if (car === player) sfxLap(car.lap >= LAPS ? 'final' : car.lap === LAPS-1 ? 'last' : 'lap');
       if (car.lap >= LAPS) finishCar(car);
     }
   }
@@ -1171,10 +1171,13 @@ function ding(f, when, vol) {
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45); g.connect(audio.master);
   for (const k of [1, 2.01]) { const o = c.createOscillator(); o.frequency.value = f*k; o.connect(g); o.start(t); o.stop(t + 0.5); }
 }
-function sfxLap(final) {
+// 'lap' = campanita simple; 'last' = al entrar en la última vuelta, campanita triple rápida y seguida;
+// 'final' = al terminar la carrera, tres notas que suben.
+function sfxLap(kind) {
   if (!audio.ctx || !audio.master) return;
+  if (kind === 'last') { ding(1568, 0, 0.2); ding(1568, 0.09, 0.2); ding(1568, 0.18, 0.2); return; }
   ding(1318, 0, 0.2);
-  if (final) { ding(1760, 0.13, 0.2); ding(2093, 0.26, 0.2); }
+  if (kind === 'final') { ding(1760, 0.13, 0.2); ding(2093, 0.26, 0.2); }
 }
 
 // Un clac de plástico: ráfaga corta de ruido filtrado.
