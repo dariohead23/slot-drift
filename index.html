@@ -175,13 +175,13 @@ const TRACKS = [
   // curva grande, bajada por la derecha, curva hacia el aro, aro de 270° que se cierra sobre la
   // bajada hacia la "cola" (se cruza consigo misma: el aro pasa por arriba, la cola por abajo),
   // U de abajo y subida por la izquierda. Giro neto de 720°: hace falta cruce de carriles.
-  { id:'lazo-3', name:'El Lazo · aro y cola',
-    startAt: 110*LZ,
-    th0: -Math.PI/2,                   // el boceto es vertical; se gira 90° para que la pista quede acostada
-    pieces: [['S',330],['A',90,230],['S',360],['A',90,150],['S',270],['A',270,140],['S',380],
-             ['A',180,240],['S',780],['A',90,200]]
+  { id:'lazo-4', name:'El Lazo · aro y cola',
+    startAt: 390*LZ,                   // la largada, a la mitad de la bajada del dibujo (la recta larga de abajo en la pista acostada)
+    th0: Math.PI,                      // la primera pieza es esa recta larga, que va hacia el oeste
+    pieces: [['S',780],['A',90,200],['S',330],['A',90,230],['S',360],['A',90,150],['S',270],['A',270,140],
+             ['S',380],['A',180,240]]
       .map(p => p[0]==='S' ? ['S', p[1]*LZ] : ['A', p[1], p[2]*LZ]),
-    swap: { piece:8, len:260 },        // cruce de carriles en la subida de la izquierda
+    swap: { piece:2, len:200 },        // cruce de carriles en la recta corta donde largaba antes
     cross: { under:'second', tunnelHalf:70, bridgeHalf:95 } },   // el aro (primera pasada) por el puente; la cola, por el túnel
 ];
 const DEFAULT_TRACK = TRACKS[0].id;
