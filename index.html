@@ -139,6 +139,9 @@ const GHOST_HZ = 30;   // muestras por segundo del fantasma
 // ---------- Pistas ----------
 // Una pista es un dato: piezas (rectas 'S' y arcos 'A' de radio constante, con ángulo
 // con signo) y, opcionalmente:
+//  · startAt: distancia que se adelanta la largada dentro de la primera pieza (que tiene que ser una
+//    recta), para no largar justo a la salida de una curva. Cambiarlo corre el origen de los fantasmas:
+//    al tocarlo hay que cambiar el id de la pista.
 //  · swap: cruce de carriles. Con un solo cruce, cada coche hace media pista en un carril
 //    y media en el otro, y cada 2 vueltas los dos recorrieron exactamente lo mismo. Por
 //    eso se modela UN solo camino cerrado de doble vuelta: largar en el carril A es
@@ -154,13 +157,13 @@ const LZ = 0.8;     // escala de El Lazo: más chico para que entre en pantalla
 const EIGHT = { R:170, M:240, D:339.705627 };   // D se resolvió para que el 8 cierre exacto
 const TRACKS = [
   { id:'cruce-2', name:'Clásica · cruce de carriles',
-    // La largada está 375 unidades adentro de la recta principal (900): la recta se parte en dos, la
-    // segunda parte (S 250×1.5) va al final y la primera (S 350×1.5) al principio. El resto no cambia.
-    pieces: [['S',350],['A',180,140],['S',200],['A',-90,80],['A',90,80],['S',240],['A',90,100],['S',240],['A',90,100],['S',250]]
+    startAt: 375,                      // la largada, 375 unidades adentro de la recta principal
+    pieces: [['S',600],['A',180,140],['S',200],['A',-90,80],['A',90,80],['S',240],['A',90,100],['S',240],['A',90,100]]
       .map(p => p[0]==='S' ? ['S', p[1]*SCALE] : ['A', p[1], p[2]*SCALE]),
     swap: { piece:5, len:260 },       // el cruce de carriles va en la recta después de la S
     structures: [] },
-  { id:'ocho-1', name:'El Ocho · túnel y puente',
+  { id:'ocho-2', name:'El Ocho · túnel y puente',
+    startAt: 170,
     th0: -Math.PI/4,                   // arranca mirando arriba a la derecha: el 8 queda acostado (∞)
     pieces: [['S',2*EIGHT.D],['A',135,EIGHT.R],['S',EIGHT.M],['A',135,EIGHT.R],
              ['S',2*EIGHT.D],['A',-135,EIGHT.R],['S',EIGHT.M],['A',-135,EIGHT.R]],
@@ -172,7 +175,8 @@ const TRACKS = [
   // curva grande, bajada por la derecha, curva hacia el aro, aro de 270° que se cierra sobre la
   // bajada hacia la "cola" (se cruza consigo misma: el aro pasa por arriba, la cola por abajo),
   // U de abajo y subida por la izquierda. Giro neto de 720°: hace falta cruce de carriles.
-  { id:'lazo-2', name:'El Lazo · aro y cola',
+  { id:'lazo-3', name:'El Lazo · aro y cola',
+    startAt: 110*LZ,
     th0: -Math.PI/2,                   // el boceto es vertical; se gira 90° para que la pista quede acostada
     pieces: [['S',330],['A',90,230],['S',360],['A',90,150],['S',270],['A',270,140],['S',380],
              ['A',180,240],['S',780],['A',90,200]]
@@ -310,7 +314,13 @@ function makeRoute(center, laps, offsetAt) {
 }
 
 function buildTrack(def0) {
-  const def = def0.close ? { ...def0, pieces: closePieces(def0) } : def0;
+  let def = def0.close ? { ...def0, pieces: closePieces(def0) } : def0;
+  if (def.startAt) {   // se corre la largada: la recta inicial se parte y su primera parte pasa al final
+    const d = def.startAt, p0 = def.pieces[0];
+    if (p0[0] !== 'S' || d >= p0[1]) throw new Error('startAt: la primera pieza tiene que ser una recta más larga que ' + d);
+    def = { ...def, pieces: [['S', p0[1]-d], ...def.pieces.slice(1), ['S', d]],
+            structures: (def.structures || []).map(st => st.piece === 0 ? { ...st, from:st.from-d, to:st.to-d } : st) };
+  }
   const { center, pieceStart } = buildCenter(def);
   let routes, starts, mid = null, lapLen;
   if (def.swap) {
