@@ -72,10 +72,9 @@
 
     <div id="ghostBox">
       <h2>Fantasma</h2>
-      <div id="ghostList"></div>
+      <select id="ghostSel"></select>
       <div class="btns">
-        <button id="expBest">Exportar mejor</button>
-        <button id="expLast">Exportar última</button>
+        <button id="expGhost">Exportar</button>
         <button id="impBtn">Importar</button>
       </div>
       <label class="hint" style="display:block;margin-top:10px">Tu nombre (va dentro de tus fantasmas)
@@ -670,7 +669,7 @@ function loadGhost(slot) {
   try { const g = ghostFromJSON(s); return validGhost(g) ? null : g; } catch { return null; }
 }
 const saveGhost = (slot, g) => store.set(ghostKey(slot), ghostToJSON(g));
-let ghostChoice = ['best', 'last', 'imported'].includes(store.get('ghostChoice')) ? store.get('ghostChoice') : 'best';   // por defecto, la mejor vuelta
+let ghostChoice = 'best';   // siempre arranca con la mejor vuelta (no se recuerda la elección)
 const loadSelectedGhost = () => loadGhost(ghostChoice);
 const playerName = () => (document.getElementById('name').value.trim() || 'Anónimo').slice(0, 20);
 
@@ -707,7 +706,7 @@ async function importGhost(text) {
   }
   const err = validGhost(g); if (err) return err;
   saveGhost('imported', g);
-  ghostChoice = 'imported'; store.set('ghostChoice', ghostChoice);
+  ghostChoice = 'imported';
   renderGhostList();
   if (mode === 'crono' && race.phase !== 'running' && race.phase !== 'lights') resetRace();
   return null;
@@ -1362,29 +1361,26 @@ for (const t of TRACKS) {
   $('trackGrid').appendChild(b);
 }
 
+// Selector de fantasma (desplegable): mi mejor, mi última o el importado. Las opciones sin fantasma
+// quedan deshabilitadas. Exportar copia el elegido, salvo el importado (ese ya viene de afuera).
 function renderGhostList() {
   const opts = [['best', 'Mi mejor', loadGhost('best')], ['last', 'Mi última', loadGhost('last')], ['imported', 'Importado', loadGhost('imported')]];
-  $('ghostList').innerHTML = '';
+  const sel = $('ghostSel'); sel.innerHTML = '';
   for (const [val, label, g] of opts) {
-    const dis = !g;
-    const row = document.createElement('label');
-    row.className = 'radio' + (dis ? ' dis' : '');
-    row.innerHTML = `<input type="radio" name="ghost" value="${val}" ${dis?'disabled':''} ${ghostChoice===val?'checked':''}>
-      <span>${label}${g ? ` <small>· ${g.name.replace(/[<&>"]/g,'')} · ${fmt(g.time)}</small>` : (dis ? ' <small>· todavía no hay</small>' : '')}</span>`;
-    row.querySelector('input').onchange = e => {
-      ghostChoice = val; store.set('ghostChoice', val); e.target.blur();
-      if (race.phase !== 'running' && race.phase !== 'lights') resetRace();
-    };
-    $('ghostList').appendChild(row);
+    const o = new Option(g ? `${label} · ${g.name.replace(/[<&>"]/g,'')} · ${fmt(g.time)}` : `${label} · todavía no hay`, val);
+    o.disabled = !g; sel.add(o);
   }
-  $('expBest').disabled = !opts[0][2];
-  $('expLast').disabled = !opts[1][2];
+  sel.value = ghostChoice;
+  $('expGhost').disabled = ghostChoice === 'imported' || !loadGhost(ghostChoice);
 }
+$('ghostSel').onchange = e => {
+  ghostChoice = e.target.value; e.target.blur(); renderGhostList();
+  if (race.phase !== 'running' && race.phase !== 'lights') resetRace();
+};
 
 $('name').value = store.get('name') || '';
 $('name').addEventListener('input', () => store.set('name', $('name').value));
-$('expBest').onclick = e => { e.target.blur(); exportGhost('best'); };
-$('expLast').onclick = e => { e.target.blur(); exportGhost('last'); };
+$('expGhost').onclick = e => { e.target.blur(); if (ghostChoice !== 'imported') exportGhost(ghostChoice); };
 $('impBtn').onclick = e => { e.target.blur(); $('impText').value = ''; $('impMsg').textContent = ''; $('impDlg').showModal(); };
 $('impCancel').onclick = () => $('impDlg').close();
 $('impOk').onclick = async () => {
