@@ -685,7 +685,7 @@ async function importGhost(text) {
 // ---------- Dibujo ----------
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let view = { sc:1, ox:0, oy:0, dpr:1, fit:1, w:1, h:1 };
-const HUD_H = 70;
+const HUD_H = 90;
 let world = { minx:0, maxx:1, miny:0, maxy:1 };
 function resize() {
   const r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
@@ -911,51 +911,43 @@ const fmt = t => t==null ? '–' : t.toFixed(2)+' s';
 const fmtD = d => (d < 0 ? '−' : '+') + Math.abs(d).toFixed(2);
 const raceTime = car => car.finished ? car.finishT : (race.phase === 'running' ? clock - race.t0 : 0);
 
-function carPanel(car, x0, bw) {
-  ctx.fillStyle = car.color; ctx.font = '600 13px system-ui';
-  let line;
-  if (mode === 'libre') line = `${car.name} · vuelta ${car.lap} · última ${fmt(car.last)} · mejor ${fmt(car.best)} · salidas ${car.offs}`;
-  else line = `${car.name} · vuelta ${Math.min(car.lap+1, LAPS)}/${LAPS} · ${fmt(raceTime(car))} · última ${fmt(car.last)} · salidas ${car.offs}`
-            + (car.falseStart ? `  ⚠ largada en falso` : '');
-  ctx.fillText(line, x0, 20);
-  ctx.fillStyle = '#2a2d33'; ctx.fillRect(x0, 30, bw*0.45, 10);
-  ctx.fillStyle = car.color; ctx.fillRect(x0, 30, bw*0.45*car.thr, 10);
-  ctx.fillStyle = '#8a8f98'; ctx.font = '11px system-ui';
-  ctx.fillText(`gatillo ${(car.thr*100|0)}%   ${(car.v|0)} px/s`, x0, 56);
-  const gx = x0 + bw*0.5, gw = bw*0.5, max = P.MAXANG.v;
-  const ang = car.off ? 0 : (car.drift||0)*180/Math.PI;
-  ctx.fillStyle = '#2a2d33'; ctx.fillRect(gx, 30, gw, 10);
-  const mid = gx + gw/2, px = Math.max(-1, Math.min(1, ang/max))*gw/2;
-  ctx.fillStyle = Math.abs(ang) > max*0.75 ? '#ff7a2e' : (car.sliding ? '#ffd34d' : '#6c7380');
-  ctx.fillRect(Math.min(mid, mid+px), 30, Math.abs(px), 10);
-  ctx.fillStyle = '#e33'; ctx.fillRect(gx, 28, 2, 14); ctx.fillRect(gx+gw-2, 28, 2, 14);
-  ctx.fillStyle = '#8a8f98';
-  ctx.fillText(car.off ? 'FUERA DE PISTA' : `deriva ${ang.toFixed(0)}°${car.sliding?'  patinando':''}`, gx, 56);
+// Recuadro del HUD (arriba a la izquierda): rótulo chico arriba y valor grande abajo.
+function hudBox(x, w, label, value, color) {
+  const y = 8, h = 70;
+  box(x + w/2, y + h/2, w, h);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#8a8f98'; ctx.font = '600 11px system-ui'; ctx.fillText(label, x + w/2, y + 20);
+  ctx.fillStyle = color || '#e8e8e8'; ctx.font = '700 28px system-ui'; ctx.fillText(value, x + w/2, y + 54);
+  ctx.textAlign = 'left';
+  return x + w + 8;
 }
 
-function ghostPanel(x0) {
+// Diferencia contra el fantasma: en vivo mientras corrés y, al terminar, el resultado final.
+function ghostGap() {
   const g = race.ghost;
-  ctx.font = '600 13px system-ui'; ctx.fillStyle = '#c9c9f5';
-  if (!g) { ctx.fillText('Sin fantasma', x0, 20); return; }
-  ctx.fillText(`FANTASMA · ${g.name} · ${fmt(g.time)}`, x0, 20);
-  if (race.phase === 'running' && !player.finished) {
-    const tg = ghostTimeAt(g, player.dist);
-    if (tg != null && player.dist > 30) {
-      const d = (clock - race.t0) - tg - g.pen;
-      ctx.font = '700 26px system-ui'; ctx.fillStyle = d <= 0 ? '#4cd36a' : '#ff5a4f';
-      ctx.fillText(fmtD(d), x0, 54);
-      ctx.font = '11px system-ui'; ctx.fillStyle = '#8a8f98';
-      ctx.fillText(d <= 0 ? 'adelante del fantasma' : 'atrás del fantasma', x0 + 100, 52);
-    }
-  }
+  if (!g) return null;
+  if (player.finished) return player.finishT - g.time;
+  if (race.phase !== 'running') return null;
+  const tg = ghostTimeAt(g, player.dist);
+  return tg != null && player.dist > 30 ? (clock - race.t0) - tg - g.pen : null;
 }
 
 function drawHud() {
   const dpr = view.dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
-  const w = cv.width/dpr, bw = w/2 - 24;
-  carPanel(player, 16, bw);
-  if (mode === 'crono') ghostPanel(w/2 + 8);
-  if (mode !== 'libre') drawRaceOverlay(w, cv.height/dpr);
+  const w = cv.width/dpr;
+  let x = 16;
+  if (mode === 'libre') {
+    x = hudBox(x, 96, 'VUELTA', String(player.lap));
+    hudBox(x, 112, 'ÚLTIMA', player.last == null ? '–' : player.last.toFixed(2));
+  } else {
+    x = hudBox(x, 96, 'VUELTA', `${Math.min(player.lap+1, LAPS)}/${LAPS}`);
+    x = hudBox(x, 112, 'TIEMPO', raceTime(player).toFixed(2));
+    if (race.ghost) {
+      const d = ghostGap();
+      hudBox(x, 118, 'VS FANTASMA', d == null ? '–' : fmtD(d), d == null ? '#8a8f98' : (d <= 0 ? '#4cd36a' : '#ff5a4f'));
+    }
+    drawRaceOverlay(w, cv.height/dpr);
+  }
 }
 
 function box(cx, cy, bw, bh) {
@@ -972,22 +964,30 @@ function drawRaceOverlay(w, hgt) {
     ctx.fillStyle = '#8a8f98'; ctx.font = '12px system-ui';
     ctx.fillText(`${LAPS} vueltas · no aceleres antes de que se apaguen las luces`, cx, cy+20);
   }
-  const sinceGo = clock - race.t0;
-  if (race.phase === 'lights' || (race.phase === 'running' && sinceGo < 1)) {
-    const on = race.phase === 'lights' ? Math.min(5, Math.floor((clock - race.lightsStart)/0.8)) : 0;
-    box(cx, cy, 5*46+24, 70);
-    for (let i=0;i<5;i++) {
-      ctx.beginPath(); ctx.arc(cx - 2*46 + i*46, cy, 17, 0, Math.PI*2);
-      ctx.fillStyle = race.phase === 'running' ? '#2fd05a' : (i < on ? '#ff2a1f' : '#2a1414'); ctx.fill();
-    }
+  // Semáforo arriba y al centro. Con las luces verdes espera tu reacción y la muestra ahí mismo; a los
+  // pocos segundos desaparece. Si hubo largada en falso, muestra el tiempo de freno que queda.
+  const sinceGo = clock - race.t0, tx = w/2, ty = 43;
+  let show = race.phase === 'lights';
+  if (race.phase === 'running') {
+    if (player.falseStart) show = clock < player.penUntil + 1;
+    else show = player.react !== null ? clock - player.reactAt < 2.5 : sinceGo < 3;
   }
-  if (race.phase === 'running' && mode === 'crono') {
-    if (player.falseStart && clock < player.penUntil) {
-      ctx.fillStyle = '#ff5a4f'; ctx.font = '700 20px system-ui';
-      ctx.fillText(`Largada en falso · freno ${(player.penUntil - clock).toFixed(1)} s`, cx, cy + 58);
-    } else if (player.react !== null && clock - player.reactAt < 2.5) {
-      ctx.fillStyle = player.react < 0.3 ? '#4cd36a' : '#e8e8e8'; ctx.font = '700 22px system-ui';
-      ctx.fillText(`Reacción ${player.react.toFixed(3)} s`, cx, cy + 58);
+  if (show) {
+    box(tx, ty, 5*40+24, 70);
+    if (race.phase === 'running' && player.falseStart) {
+      ctx.fillStyle = '#ff5a4f'; ctx.font = '700 18px system-ui'; ctx.fillText('Largada en falso', tx, ty - 4);
+      ctx.fillStyle = '#e8e8e8'; ctx.font = '600 14px system-ui';
+      ctx.fillText(clock < player.penUntil ? `freno ${(player.penUntil - clock).toFixed(1)} s` : 'liberado', tx, ty + 20);
+    } else if (race.phase === 'running' && player.react !== null) {
+      ctx.fillStyle = player.react < 0.3 ? '#4cd36a' : '#e8e8e8'; ctx.font = '700 32px system-ui';
+      ctx.fillText(`${player.react.toFixed(3)} s`, tx, ty + 8);
+      ctx.fillStyle = '#8a8f98'; ctx.font = '600 11px system-ui'; ctx.fillText('REACCIÓN', tx, ty - 22);
+    } else {
+      const on = race.phase === 'lights' ? Math.min(5, Math.floor((clock - race.lightsStart)/0.8)) : 0;
+      for (let i=0;i<5;i++) {
+        ctx.beginPath(); ctx.arc(tx - 2*40 + i*40, ty, 15, 0, Math.PI*2);
+        ctx.fillStyle = race.phase === 'running' ? '#2fd05a' : (i < on ? '#ff2a1f' : '#2a1414'); ctx.fill();
+      }
     }
   }
   if (race.phase === 'done' && race.result) drawResults(cx, cy);
