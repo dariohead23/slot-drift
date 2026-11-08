@@ -187,14 +187,15 @@ const TRACKS = [
   // Boceto del usuario (long.jpeg), a escala LG (1 px del dibujo = LG unidades) y girado 90° para que quede
   // acostada. Va en sentido horario: recta de largada (la recta larga de la izquierda del dibujo), arco grande,
   // bajada, giro en U hacia atrás, un escalón en diagonal (curvas de 35° con una recta en el medio), segundo arco,
-  // recta larga, curva a la diagonal, y vuelta por la recta de abajo y una curva cerrada. Giro neto de 360°:
+  // recta larga, dos curvas leves con una recta en el medio (diagonal), la recta de abajo y otras dos curvas leves
+  // con una recta en el medio para entrar a la recta principal. Giro neto de 360°:
   // hace falta cruce de carriles. Sin cruces de pista ni puentes.
-  { id:'largo-1', name:'Largo · arcos y diagonal',
+  { id:'largo-2', name:'Largo · arcos y diagonal',
     startAt: 250,                      // la largada, adentro de la recta larga (764)
     close: [10, 14],                   // la recta larga del lado derecho del dibujo y la recta de abajo: las calcula closePieces
     th0: 0,                            // el dibujo apunta hacia arriba; girado 90° apunta hacia la derecha
     pieces: [['S',546],['A',180,91],['S',344],['A',-180,86],['S',95],['A',-35,80],['S',106],['A',35,80],['S',80],['A',180,95],
-             ['S',0],['A',54,110],['S',106],['A',36,107],['S',0],['A',90,105]]
+             ['S',0],['A',54,110],['S',106],['A',36,107],['S',0],['A',45,110],['S',60],['A',45,110]]
       .map(p => p[0]==='S' ? ['S', p[1]*LG] : ['A', p[1], p[2]*LG]),
     swap: { piece:10, len:260 },       // cruce de carriles en la recta larga del lado derecho del dibujo
     structures: [] },
