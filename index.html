@@ -345,8 +345,8 @@ function buildTrack(def0) {
 }
 // Contador de vueltas, pegado al borde de la pista junto a la línea de largada (como los viejos
 // Scalextric). Va del lado de arriba de la pantalla, salvo que ahí no haya lugar (otro tramo de pista).
-// off = semiancho de la pista (42) + media caja (23.5) - 1: apoyado en el borde, como una pieza más.
-const COUNTER = { w:81, h:47, off:64.5 };
+// off = semiancho de la pista (42) + media caja (23.5) + 0.5: apoyado en el borde, como una pieza más.
+const COUNTER = { w:81, h:47, off:66 };
 function computeCounter(center) {
   const p0 = center[0], n = center.length, nx = -Math.sin(p0.th), ny = Math.cos(p0.th);
   const cands = [1, -1].map(side => {
