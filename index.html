@@ -798,15 +798,15 @@ function drawGround() {
     ctx.fillRect(r*6-6, -half + i*6, 6, 6);
   }
   ctx.restore();
-  // Vueltas completadas, pintadas en el asfalto justo después de la línea de largada: así se leen sin
+  // Vuelta en curso, pintada en el asfalto justo después de la línea de largada: así se leen sin
   // despegar la vista del coche. El número cambia en el momento de cruzar la línea y se inclina como la
   // pista (si quedaría cabeza abajo, se da vuelta media vuelta para que se lea). En la última vuelta se pone ámbar.
   if (mode === 'crono') {
-    const p = T.center[Math.min(T.center.length-1, 46)], done = Math.min(player.lap, LAPS);
+    const p = T.center[Math.min(T.center.length-1, 46)], cur = Math.min(player.lap + 1, LAPS);
     ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(Math.cos(p.th) < 0 ? p.th + Math.PI : p.th);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = '700 32px system-ui'; ctx.fillStyle = done === LAPS-1 ? 'rgba(255,200,60,.8)' : 'rgba(255,255,255,.6)';
-    ctx.fillText(`${done}/${LAPS}`, 0, 0);
+    ctx.font = '700 32px system-ui'; ctx.fillStyle = cur === LAPS ? 'rgba(255,200,60,.8)' : 'rgba(255,255,255,.6)';
+    ctx.fillText(`${cur}/${LAPS}`, 0, 0);
     ctx.restore();
   }
 }
@@ -966,7 +966,6 @@ function drawHud() {
     x = hudBox(x, 96, 'VUELTA', String(player.lap));
     hudBox(x, 112, 'ÚLTIMA', player.last == null ? '–' : player.last.toFixed(2));
   } else {
-    x = hudBox(x, 96, 'VUELTA', `${Math.min(player.lap+1, LAPS)}/${LAPS}`);
     x = hudBox(x, 112, 'TIEMPO', raceTime(player).toFixed(2));
     if (race.ghost) {
       const d = ghostGap();
